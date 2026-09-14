@@ -124,6 +124,15 @@ function parseFiniteNumber(raw, name) {
   return n;
 }
 
+function parseNonNegativeIntegerOption(raw, name) {
+  if (raw === undefined) return undefined;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 0) {
+    throw new NansenError(`--${name} must be a non-negative integer, got "${raw}"`, ErrorCode.INVALID_PARAMS);
+  }
+  return n;
+}
+
 /**
  * Build a { min, max } range object from two option values.
  * Returns undefined if neither is provided.
@@ -601,6 +610,9 @@ USAGE:
         'list': async () => {
           if (flags.enabled && flags.disabled) throw new NansenError('Cannot specify both --enabled and --disabled', ErrorCode.INVALID_PARAMS);
 
+          const offset = parseNonNegativeIntegerOption(options.offset, 'offset');
+          const limit = parseNonNegativeIntegerOption(options.limit, 'limit');
+
           const results = await apiInstance.alertsList();
           let alerts = Array.isArray(results) ? results : results?.alerts ?? results?.data ?? [];
 
@@ -635,18 +647,10 @@ USAGE:
           //   - Negative values (`--offset -1`) were accepted and fed straight
           //     into `slice()`, which treats negative indices as "from the end" —
           //     silently returning the wrong slice instead of rejecting the input.
-          if (options.offset !== undefined) {
-            const offset = Number(options.offset);
-            if (!Number.isInteger(offset) || offset < 0) {
-              throw new NansenError(`--offset must be a non-negative integer, got "${options.offset}"`, ErrorCode.INVALID_PARAMS);
-            }
+          if (offset !== undefined) {
             alerts = alerts.slice(offset);
           }
-          if (options.limit !== undefined) {
-            const limit = Number(options.limit);
-            if (!Number.isInteger(limit) || limit < 0) {
-              throw new NansenError(`--limit must be a non-negative integer, got "${options.limit}"`, ErrorCode.INVALID_PARAMS);
-            }
+          if (limit !== undefined) {
             alerts = alerts.slice(0, limit);
           }
 
