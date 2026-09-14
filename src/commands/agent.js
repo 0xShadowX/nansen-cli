@@ -330,7 +330,7 @@ EXAMPLES:
         try {
           result = await consumeSSEStream(response);
         } catch (err) {
-          wrapAbortDuringStream(err);
+          return wrapAbortDuringStream(err); // always throws; return makes intent explicit
         } finally {
           clearTimeout(timer);
         }
@@ -360,7 +360,7 @@ EXAMPLES:
           },
         });
       } catch (err) {
-        wrapAbortDuringStream(err);
+        return wrapAbortDuringStream(err); // always throws; return makes intent explicit
       } finally {
         clearTimeout(timer);
       }
