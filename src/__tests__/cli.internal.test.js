@@ -792,30 +792,35 @@ describe('alerts list — client-side filtering', () => {
     const { mockApi, cmd } = setup();
     await expect(cmd(['list'], mockApi, {}, { limit: 'abc' }))
       .rejects.toThrow('--limit must be a non-negative integer');
+    expect(mockApi.alertsList).not.toHaveBeenCalled();
   });
 
   it('should reject a non-numeric --offset instead of silently no-op-ing', async () => {
     const { mockApi, cmd } = setup();
     await expect(cmd(['list'], mockApi, {}, { offset: 'abc' }))
       .rejects.toThrow('--offset must be a non-negative integer');
+    expect(mockApi.alertsList).not.toHaveBeenCalled();
   });
 
   it('should reject a negative --limit', async () => {
     const { mockApi, cmd } = setup();
     await expect(cmd(['list'], mockApi, {}, { limit: -1 }))
       .rejects.toThrow('--limit must be a non-negative integer');
+    expect(mockApi.alertsList).not.toHaveBeenCalled();
   });
 
   it('should reject a negative --offset instead of silently slicing from the end', async () => {
     const { mockApi, cmd } = setup();
     await expect(cmd(['list'], mockApi, {}, { offset: -1 }))
       .rejects.toThrow('--offset must be a non-negative integer');
+    expect(mockApi.alertsList).not.toHaveBeenCalled();
   });
 
   it('should reject a non-integer --limit (e.g. "2.5")', async () => {
     const { mockApi, cmd } = setup();
     await expect(cmd(['list'], mockApi, {}, { limit: '2.5' }))
       .rejects.toThrow('--limit must be a non-negative integer');
+    expect(mockApi.alertsList).not.toHaveBeenCalled();
   });
 
   it('should combine type + chain filters', async () => {
