@@ -425,6 +425,58 @@ describe('agent command', () => {
       const fetchOptions = fetchSpy.mock.calls[0][1];
       expect(fetchOptions.signal).toBeInstanceOf(AbortSignal);
     });
+
+    // Abort can fire mid-body-read, not just during the fetch() call itself.
+    function mockAbortingBody() {
+      // No `yield` here on purpose — the mocked stream never produces a
+      // frame before aborting, so this isn't a generator, just a manual
+      // async iterator whose first next() rejects.
+      return {
+        [Symbol.asyncIterator]() {
+          return {
+            next() {
+              return Promise.reject(
+                new DOMException('The operation was aborted', 'AbortError')
+              );
+            },
+          };
+        },
+      };
+    }
+
+    function mockAbortingResponse() {
+      return {
+        ok: true,
+        status: 200,
+        headers: new Headers({ 'content-type': 'text/event-stream' }),
+        body: mockAbortingBody(),
+      };
+    }
+
+    it('throws TIMEOUT (not a raw AbortError) when the abort fires during streaming output', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(mockAbortingResponse());
+
+      try {
+        await cmd(['test'], mockApi(), {}, {});
+        expect.unreachable('should have thrown');
+      } catch (err) {
+        expect(err).toBeInstanceOf(NansenError);
+        expect(err.code).toBe(ErrorCode.TIMEOUT);
+        expect(err.message).toContain('120s');
+      }
+    });
+
+    it('throws TIMEOUT (not a raw AbortError) when the abort fires during JSON mode', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(mockAbortingResponse());
+
+      try {
+        await cmd(['test'], mockApi(), { json: true }, {});
+        expect.unreachable('should have thrown');
+      } catch (err) {
+        expect(err).toBeInstanceOf(NansenError);
+        expect(err.code).toBe(ErrorCode.TIMEOUT);
+      }
+    });
   });
 
   // ── Conversation ID validation ──

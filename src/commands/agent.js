@@ -310,11 +310,27 @@ EXAMPLES:
         );
       }
 
+      // Abort can also fire while reading the SSE body, not just during
+      // fetch() — wrap that AbortError the same way for a consistent error.
+      const wrapAbortDuringStream = (err) => {
+        if (err.name === 'AbortError') {
+          throw new NansenError(
+            `Request timed out after ${timeoutMs / 1000}s`,
+            ErrorCode.TIMEOUT,
+            504,
+            { detail: `${modeName} mode timeout (${timeoutMs / 1000}s)` },
+          );
+        }
+        throw err;
+      };
+
       // ── JSON mode: buffer everything, return structured data ──
       if (flags.json) {
         let result;
         try {
           result = await consumeSSEStream(response);
+        } catch (err) {
+          wrapAbortDuringStream(err);
         } finally {
           clearTimeout(timer);
         }
@@ -343,6 +359,8 @@ EXAMPLES:
             errorLog(`⚙ ${name}`);
           },
         });
+      } catch (err) {
+        wrapAbortDuringStream(err);
       } finally {
         clearTimeout(timer);
       }
