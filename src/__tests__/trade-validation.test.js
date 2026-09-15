@@ -1852,6 +1852,21 @@ describe('assertSwapOutcome', () => {
       .toThrow(/SWAP_OUTCOME_MISMATCH[\s\S]*below the requested input/i);
   });
 
+  it('native exact-in bridge: sub-slack-threshold amount uses half-requested floor (0.003 ETH bridge)', () => {
+    // 0.003 ETH is below 2 × EVM_BRIDGE_NATIVE_INPUT_REFUND_SLACK (~0.004 ETH), so the
+    // applied slack is capped at requested / 2n = 0.0015 ETH. The floor is 50% of requested.
+    const smallRequest = {
+      ...nativeBridgeRequest,
+      amount: '3000000000000000', maxInputAmount: '3000000000000000',
+    };
+    const smallQuote = { ...nativeBridgeQuote, inAmount: '3000000000000000' };
+    // Exactly at the half-requested floor: passes.
+    expect(() => assertSwapOutcome(smallRequest, smallQuote, { deltas: { [NATIVE]: -1500000000000000n }, approvals: [] }, {})).not.toThrow();
+    // One wei below: fails.
+    expect(() => assertSwapOutcome(smallRequest, smallQuote, { deltas: { [NATIVE]: -1499999999999999n }, approvals: [] }, {}))
+      .toThrow(/SWAP_OUTCOME_MISMATCH[\s\S]*below the requested input/i);
+  });
+
   it('same-chain native exact-in swap: not affected by bridge floor slack; assertion 2 governs', () => {
     // inputIsNative is true but isBridge is false — the bridge floor block never
     // runs, and the swap is judged by output arrival (assertion 2).
