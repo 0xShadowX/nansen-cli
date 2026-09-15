@@ -1727,23 +1727,22 @@ describe('assertSwapOutcome', () => {
       .toThrow(/SWAP_OUTCOME_MISMATCH[\s\S]*other than the one you are selling/i);
   });
 
-  it('bridge: rejects wallet-owned intermediate token outflow unless explicitly supported', () => {
-    // Wallet-owned intermediate-token bridge routes (where the source leg routes
-    // through a token already held by the wallet) are intentionally unsupported.
-    // The ERC-20 sibling check is strict-zero for all non-input, non-native tokens
-    // regardless of whether the quote declares an "intermediate" step, until a
-    // future quote format provides a trustworthy intermediate token address and a
-    // safe maximum outflow that can be verified.
+  it('bridge: native fee tolerance does not unlock an ERC-20 intermediate token outflow', () => {
+    // A bridge with a tolerated native ETH fee (within siblingDustThreshold) and
+    // a wallet-owned ERC-20 intermediate token both leaving the wallet must still
+    // fail closed. The native tolerance is narrow and token-type-specific; it
+    // cannot be used to launder an ERC-20 sibling drain as an "intermediate".
     const intermediate = '0xaaaa000000000000000000000000000000000001';
     const bridgeRequest = { ...exactInRequest, toChain: 'solana' };
     const sim = {
       deltas: {
         [USDC]: -1000000n,
-        [intermediate]: -42n,
+        [NATIVE]: -1_000_000_000_000_000n, // 0.001 ETH fee — within the threshold
+        [intermediate]: -42n,              // wallet-owned intermediate ERC-20
       },
       approvals: [],
     };
-    expect(() => assertSwapOutcome(bridgeRequest, exactInQuote, sim, {}))
+    expect(() => assertSwapOutcome(bridgeRequest, exactInQuote, sim, { siblingDustThreshold: 2_000_000_000_000_000n }))
       .toThrow(/SWAP_OUTCOME_MISMATCH[\s\S]*other than the one you are selling/i);
   });
 
