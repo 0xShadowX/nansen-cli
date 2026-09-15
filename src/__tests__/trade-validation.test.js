@@ -1798,6 +1798,60 @@ describe('assertSwapOutcome', () => {
     expect(() => assertSwapOutcome(exactInRequest, exactInQuote, sim, { slippage: 0.03 }))
       .toThrow(/SWAP_OUTCOME_MISMATCH[\s\S]*minimum acceptable output/i);
   });
+
+  // ---------------------------------------------------------------------------
+  // Native-input exact-in bridge: refund slack
+  // Some routers receive msg.value = request.amount and refund a small unused
+  // remainder, making the net outflow slightly below the requested input.
+  // ---------------------------------------------------------------------------
+  const nativeBridgeRequest = {
+    chain: 'base', walletAddress: '0xwallet',
+    fromToken: NATIVE, toToken: USDC,
+    swapMode: 'exactIn', toChain: 'solana',
+    amount: '100000000000000000', maxInputAmount: '100000000000000000', // 0.1 ETH
+  };
+  const nativeBridgeQuote = {
+    inputMint: NATIVE, outputMint: USDC,
+    inAmount: '100000000000000000', outAmount: '1000000',
+  };
+
+  it('native exact-in bridge: passes when outflow is within the refund slack (0.001 ETH below requested)', () => {
+    const sim = { deltas: { [NATIVE]: -99000000000000000n }, approvals: [] }; // 0.001 ETH refunded
+    expect(() => assertSwapOutcome(nativeBridgeRequest, nativeBridgeQuote, sim, {})).not.toThrow();
+  });
+
+  it('native exact-in bridge: rejects zero outflow (no-op bridge)', () => {
+    const sim = { deltas: {}, approvals: [] };
+    expect(() => assertSwapOutcome(nativeBridgeRequest, nativeBridgeQuote, sim, {}))
+      .toThrow(/SWAP_OUTCOME_MISMATCH[\s\S]*below the requested input/i);
+  });
+
+  it('native exact-in bridge: rejects a far-below-requested outflow beyond refund slack', () => {
+    const sim = { deltas: { [NATIVE]: -1n }, approvals: [] }; // nearly nothing spent
+    expect(() => assertSwapOutcome(nativeBridgeRequest, nativeBridgeQuote, sim, {}))
+      .toThrow(/SWAP_OUTCOME_MISMATCH[\s\S]*below the requested input/i);
+  });
+
+  it('ERC-20 exact-in bridge: rejects even a 1-unit shortfall (no slack for token input)', () => {
+    const bridgeRequest = { ...exactInRequest, toChain: 'solana' };
+    const sim = { deltas: { [USDC]: -999999n }, approvals: [] }; // 1 below requested 1,000,000
+    expect(() => assertSwapOutcome(bridgeRequest, exactInQuote, sim, {}))
+      .toThrow(/SWAP_OUTCOME_MISMATCH[\s\S]*below the requested input/i);
+  });
+
+  it('same-chain native exact-in swap: not affected by bridge floor slack; assertion 2 governs', () => {
+    // inputIsNative is true but isBridge is false — the bridge floor block never
+    // runs, and the swap is judged by output arrival (assertion 2).
+    const req = {
+      chain: 'base', walletAddress: '0xwallet',
+      fromToken: NATIVE, toToken: USDC,
+      swapMode: 'exactIn', amount: '100000000000000000', maxInputAmount: '100000000000000000',
+    };
+    const quote = { inputMint: NATIVE, outputMint: USDC, inAmount: '100000000000000000', outAmount: '1000000' };
+    const sim = { deltas: { [NATIVE]: -99000000000000000n }, approvals: [] }; // no USDC arrives
+    expect(() => assertSwapOutcome(req, quote, sim, {}))
+      .toThrow(/SWAP_OUTCOME_MISMATCH[\s\S]*minimum acceptable output/i);
+  });
 });
 
 describe('assertSolanaSwapOutcome', () => {
