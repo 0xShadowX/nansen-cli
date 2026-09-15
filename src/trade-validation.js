@@ -174,6 +174,14 @@ const NATIVE_TOKEN_ADDRESSES = {
 // legitimately needs more.
 export const EVM_BRIDGE_NATIVE_FEE_SLACK = 2_000_000_000_000_000n; // 0.002 ETH
 
+// Tolerance for a native-ETH refund on an exact-in bridge: some routers receive
+// msg.value = request.amount and return a small unused remainder, so the sim's net
+// outflow can be slightly below the requested input on a correctly funded bridge.
+// Same numeric cap as EVM_BRIDGE_NATIVE_FEE_SLACK (conservative, gas-independent);
+// kept separate so sibling-fee and input-refund tolerances protect distinct
+// assertions and remain distinguishable in reviews.
+export const EVM_BRIDGE_NATIVE_INPUT_REFUND_SLACK = 2_000_000_000_000_000n; // 0.002 ETH
+
 // Native SOL has two on-chain spellings that denote the same asset: the
 // canonical wrapped-SOL mint (what the CLI resolves `SOL` to and persists as
 // the request intent) and the System Program address that aggregators and
@@ -966,7 +974,9 @@ export function isBridgeRequest(request) {
  * Four assertions, all derived from the persisted request intent + the quote:
  *   1. the input token leaves the wallet by no MORE than maxInputAmount. Native
  *      input excludes gas: the sim deltas are log-based, so gas (not a transfer
- *      log) is never counted.
+ *      log) is never counted. For exact-in cross-chain bridges with native ETH
+ *      input, the lower outflow floor is relaxed by EVM_BRIDGE_NATIVE_INPUT_REFUND_SLACK
+ *      to tolerate routers that refund a small unused remainder of msg.value.
  *   2. the output token arrives by AT LEAST minOut — exactOut: >= the requested
  *      output; exactIn: the quoted output reduced by the slippage in effect.
  *      SKIPPED for a cross-chain bridge: the output settles on the destination
@@ -1033,6 +1043,7 @@ export function assertSwapOutcome(request, quote, sim, { slippage, expectedSpend
 
   // Bridges skip only assertion 2 (output arrival) below — see isBridgeRequest.
   const isBridge = isBridgeRequest(request);
+  const inputIsNative = inputToken === EVM_NATIVE_SENTINEL;
 
   // --- Assertion 1: input outflow within the spend ceiling ---
   // This bounds the outflow by maxInputAmount (the slippage-buffered ceiling),
@@ -1073,8 +1084,9 @@ export function assertSwapOutcome(request, quote, sim, { slippage, expectedSpend
   // fee-only or 1-unit no-op would still verify a bridge that never funded its
   // input. For exactIn the outflow must be ~the requested input (assertion 1
   // already caps it above); for exactOut the input is variable up to the cap, so
-  // only a positive-outflow floor is meaningful. EVM native input delta is the
-  // transferred value with gas excluded, so the outflow is exact — no fee slack.
+  // only a positive-outflow floor is meaningful. For native ETH input the floor
+  // is relaxed by EVM_BRIDGE_NATIVE_INPUT_REFUND_SLACK to tolerate routers that
+  // refund a small unused portion of msg.value; token input floors remain exact.
   if (isBridge) {
     if (swapMode === 'exactIn') {
       if (request.amount == null) throw fail('bridge exactIn request is missing the requested input amount.');
@@ -1085,8 +1097,19 @@ export function assertSwapOutcome(request, quote, sim, { slippage, expectedSpend
         throw fail(`requested input amount (${request.amount}) is not an integer.`);
       }
       if (requested <= 0n) throw fail(`bridge exactIn request has a non-positive input amount (${requested}).`);
-      if (outflow < requested) {
-        throw fail(`the bridge moved only ${outflow} of the input token (${inputToken}) out of the wallet, below the requested input (${requested}); a bridge must spend its full input on the source chain.`);
+      const floorSlack = inputIsNative ? EVM_BRIDGE_NATIVE_INPUT_REFUND_SLACK : 0n;
+      // Cap at requested / 2n: for bridges below 2 × EVM_BRIDGE_NATIVE_INPUT_REFUND_SLACK
+      // (~0.004 ETH), the applied slack shrinks proportionally so the floor stays ≥ 50 %
+      // of the requested amount rather than collapsing toward zero.
+      const appliedSlack = floorSlack < requested / 2n ? floorSlack : requested / 2n;
+      const minOutflow = requested - appliedSlack;
+      if (outflow < minOutflow) {
+        throw fail(
+          `the bridge moved only ${outflow} of the input token (${inputToken}) out of the wallet, ` +
+          `below the minimum required outflow (${minOutflow})` +
+          `${inputIsNative ? ` (requested ${requested} minus native refund slack ${appliedSlack})` : ''}` +
+          `; a bridge must spend its input on the source chain.`
+        );
       }
     } else if (outflow <= 0n) {
       throw fail(`the bridge moved no input token (${inputToken}) out of the wallet; a bridge must spend its input on the source chain.`);
