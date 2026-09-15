@@ -1164,6 +1164,11 @@ export function assertSwapOutcome(request, quote, sim, { slippage, expectedSpend
   // threshold the caller passes (gas is already excluded from the native delta).
   // ERC-20 siblings and every same-chain swap keep strict-zero. This mirrors the
   // native-only carve-out assertSolanaSwapOutcome already applies for SOL.
+  //
+  // Wallet-owned intermediate-token bridge routes are intentionally unsupported
+  // here unless a future quote format identifies the intermediate token and a
+  // safe maximum outflow. Treat every ERC-20 sibling as strict-zero so a route
+  // cannot drain unrelated wallet holdings under the label of "intermediate".
   const nativeDust = isBridge && siblingDustThreshold > 0n ? siblingDustThreshold : 0n;
   for (const [token, delta] of Object.entries(deltas)) {
     if (token === inputToken) continue; // its outflow is bounded by assertion 1

@@ -1727,6 +1727,26 @@ describe('assertSwapOutcome', () => {
       .toThrow(/SWAP_OUTCOME_MISMATCH[\s\S]*other than the one you are selling/i);
   });
 
+  it('bridge: rejects wallet-owned intermediate token outflow unless explicitly supported', () => {
+    // Wallet-owned intermediate-token bridge routes (where the source leg routes
+    // through a token already held by the wallet) are intentionally unsupported.
+    // The ERC-20 sibling check is strict-zero for all non-input, non-native tokens
+    // regardless of whether the quote declares an "intermediate" step, until a
+    // future quote format provides a trustworthy intermediate token address and a
+    // safe maximum outflow that can be verified.
+    const intermediate = '0xaaaa000000000000000000000000000000000001';
+    const bridgeRequest = { ...exactInRequest, toChain: 'solana' };
+    const sim = {
+      deltas: {
+        [USDC]: -1000000n,
+        [intermediate]: -42n,
+      },
+      approvals: [],
+    };
+    expect(() => assertSwapOutcome(bridgeRequest, exactInQuote, sim, {}))
+      .toThrow(/SWAP_OUTCOME_MISMATCH[\s\S]*other than the one you are selling/i);
+  });
+
   it('bridge: rejects a no-op transaction that spends no input (intent-relative floor)', () => {
     // A bridge skips assertion 2 (output arrival), which for a normal swap is
     // what proves the input actually left. Empty deltas must not pass as a
