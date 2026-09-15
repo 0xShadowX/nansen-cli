@@ -580,10 +580,14 @@
                   "required": true,
                   "description": "Comma-separated list (or JSON array) of up to 10 distinct wallet addresses"
                 },
+                "file": {
+                  "type": "string",
+                  "description": "Read the addresses from a file instead: a JSON array of addresses, or one address per line"
+                },
                 "chain": {
                   "type": "string",
-                  "default": "ethereum",
-                  "description": "Chain to profile every address on. One ecosystem per request: EVM and Solana addresses cannot be mixed"
+                  "default": "all",
+                  "description": "Chain to profile every address on. The default 'all' detects each address's chain automatically; naming a chain restricts the request to that ecosystem"
                 },
                 "days": {
                   "type": "number",

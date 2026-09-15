@@ -553,6 +553,27 @@ export function parseAddressList(raw) {
   }
 }
 
+/**
+ * Read an address list from a file: either a JSON array of address strings or
+ * one address per line. Shared by the profiler commands that accept --file.
+ */
+function readAddressFile(file) {
+  const content = fs.readFileSync(file, 'utf8');
+  try {
+    const parsed = JSON.parse(content);
+    if (!Array.isArray(parsed) || !parsed.every(item => typeof item === 'string')) {
+      throw new NansenError(
+        'File must contain a JSON array of address strings or one address per line',
+        ErrorCode.INVALID_PARAMS
+      );
+    }
+    return parsed.map(a => a.trim()).filter(Boolean);
+  } catch (e) {
+    if (e instanceof NansenError) throw e;
+    return content.split('\n').map(a => a.trim()).filter(Boolean);
+  }
+}
+
 // ============= Composite Functions =============
 
 export async function batchProfile(api, params = {}) {
@@ -1304,14 +1325,12 @@ export function buildCommands(deps = {}) {
         'related-wallets': () => apiInstance.addressRelatedWallets({ address, chain, orderBy, pagination }),
         'first-funder': () => apiInstance.addressFirstFunder({ address }),
         'counterparties': () => apiInstance.addressCounterparties({ address, chain, filters, orderBy, pagination, days }),
-        'counterparties-batch': () => apiInstance.addressCounterpartiesBatch({
-          addresses: parseAddressList(options.addresses),
-          chain,
-          filters,
-          orderBy,
-          pagination,
-          days
-        }),
+        'counterparties-batch': () => {
+          const addresses = options.addresses
+            ? parseAddressList(options.addresses)
+            : (options.file ? readAddressFile(options.file) : []);
+          return apiInstance.addressCounterpartiesBatch({ addresses, chain, filters, orderBy, pagination, days });
+        },
         'pnl-summary': () => apiInstance.addressPnlSummary({ address, chain, orderBy, pagination, days }),
         'perp-positions': () => apiInstance.addressPerpPositions({ address, filters, orderBy, pagination }),
         'perp-trades': () => apiInstance.addressPerpTrades({ address, filters, orderBy, pagination, days }),
@@ -1324,20 +1343,7 @@ export function buildCommands(deps = {}) {
           if (options.addresses) {
             addresses = parseAddressList(options.addresses);
           } else if (options.file) {
-            const content = fs.readFileSync(options.file, 'utf8');
-            try {
-              const parsed = JSON.parse(content);
-              if (!Array.isArray(parsed)) {
-                throw new NansenError('File must contain a JSON array of address strings or one address per line', ErrorCode.INVALID_PARAMS);
-              }
-              if (!parsed.every(item => typeof item === 'string')) {
-                throw new NansenError('File must contain a JSON array of address strings or one address per line', ErrorCode.INVALID_PARAMS);
-              }
-              addresses = parsed.map(a => a.trim()).filter(Boolean);
-            } catch (e) {
-              if (e instanceof NansenError) throw e;
-              addresses = content.split('\n').map(a => a.trim()).filter(Boolean);
-            }
+            addresses = readAddressFile(options.file);
           }
           if (addresses.length > 100) {
             throw new NansenError('Batch is limited to 100 addresses', ErrorCode.INVALID_PARAMS);

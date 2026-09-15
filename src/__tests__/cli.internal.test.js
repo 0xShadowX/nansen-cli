@@ -41,7 +41,8 @@ import {
 import { getCachedResponse, setCachedResponse, clearCache, getCacheDir, NansenError, ErrorCode, computeIdentityDigest } from '../api.js';
 import { EVM_CHAINS } from '../chain-ids.js';
 import * as fs from 'fs';
-import * as _path from 'path';
+import * as os from 'os';
+import * as path from 'path';
 
 describe('parseArgs', () => {
   it('should parse positional arguments', () => {
@@ -4213,18 +4214,22 @@ describe('profiler counterparties-batch command', () => {
   const ADDR_A = '0x0000000000000000000000000000000000000001';
   const ADDR_B = '0x0000000000000000000000000000000000000002';
 
+  function mockBatchApi() {
+    return { addressCounterpartiesBatch: vi.fn().mockResolvedValue({ pagination: {}, data: [] }) };
+  }
+
   it('should appear in SCHEMA', () => {
     const batch = SCHEMA.commands.research.subcommands['profiler'].subcommands['counterparties-batch'];
     expect(batch).toBeDefined();
     expect(batch.endpoint).toBe('/api/v1/profiler/address/counterparties/batch');
     expect(batch.options.addresses.required).toBe(true);
     expect(batch.options.days.default).toBe(30);
+    // The dispatch default is 'all', so the schema must document that, not 'ethereum'
+    expect(batch.options.chain.default).toBe('all');
   });
 
   it('should pass comma-separated --addresses through to the batch method', async () => {
-    const mockApi = {
-      addressCounterpartiesBatch: vi.fn().mockResolvedValue({ pagination: {}, data: [] }),
-    };
+    const mockApi = mockBatchApi();
     const commands = buildCommands({});
     await commands['profiler'](['counterparties-batch'], mockApi, {}, {
       addresses: `${ADDR_A}, ${ADDR_B}`,
@@ -4240,6 +4245,35 @@ describe('profiler counterparties-batch command', () => {
       days: 7,
       pagination: { page: 1, per_page: 2 }
     }));
+  });
+
+  it('should send chain "all" when --chain is omitted', async () => {
+    const mockApi = mockBatchApi();
+    const commands = buildCommands({});
+    await commands['profiler'](['counterparties-batch'], mockApi, {}, { addresses: ADDR_A });
+
+    expect(mockApi.addressCounterpartiesBatch).toHaveBeenCalledWith(expect.objectContaining({
+      addresses: [ADDR_A],
+      chain: 'all'
+    }));
+  });
+
+  it('should read addresses from --file', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nansen-cli-test-'));
+    const file = path.join(dir, 'addresses.txt');
+    fs.writeFileSync(file, `${ADDR_A}\n${ADDR_B}\n`);
+
+    try {
+      const mockApi = mockBatchApi();
+      const commands = buildCommands({});
+      await commands['profiler'](['counterparties-batch'], mockApi, {}, { file, chain: 'ethereum' });
+
+      expect(mockApi.addressCounterpartiesBatch).toHaveBeenCalledWith(expect.objectContaining({
+        addresses: [ADDR_A, ADDR_B]
+      }));
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('should return the response unchanged so rows keep their wallet_address', async () => {

@@ -458,6 +458,24 @@ function requireValidToken(tokenAddress, chain) {
   if (!v.valid) throw new NansenError(v.error, v.code);
 }
 
+/**
+ * Throw if the address is invalid for `chain`. Chain 'all' is auto-detected per
+ * address server-side, so accept anything it can route — a valid EVM or Solana
+ * address — instead of falling through validateAddress's permissive
+ * unknown-chain branch.
+ */
+function requireValidAutoDetectedAddress(address, chain) {
+  if (chain !== 'all') {
+    requireValidAddress(address, chain);
+    return;
+  }
+  if (validateAddress(address, 'ethereum').valid || validateAddress(address, 'solana').valid) return;
+  throw new NansenError(
+    `Invalid address format: "${address}". With chain "all" every address must be a valid EVM address (0x followed by 40 hex characters) or Solana address (Base58, 32-44 chars).`,
+    ErrorCode.INVALID_ADDRESS
+  );
+}
+
 export function loadConfig() {
   // Base config from files, then env vars override individual fields
   let config = null;
@@ -1240,7 +1258,15 @@ export class NansenAPI {
   async addressCounterpartiesBatch(params = {}) {
     const { addresses, chain = 'ethereum', filters = {}, orderBy, pagination, days = 30, sourceInput } = params;
     const list = Array.isArray(addresses) ? addresses : (addresses ? [addresses] : []);
-    const walletAddresses = [...new Set(list.map(a => String(a).trim()).filter(Boolean))];
+    // Dedupe on the normalised form, because the server lowercases EVM addresses
+    // before deduping: a checksum-cased repeat must not count twice against the
+    // address limit. Solana (and other case-sensitive) addresses normalise to
+    // themselves. Chain 'all' auto-detects per address, so normalise EVM casing
+    // there too.
+    const normalizeChain = chain === 'all' ? 'ethereum' : chain;
+    const walletAddresses = [...new Set(
+      list.map(a => normalizeAddress(String(a).trim(), normalizeChain)).filter(Boolean)
+    )];
 
     if (walletAddresses.length === 0) {
       throw new NansenError(
@@ -1263,7 +1289,7 @@ export class NansenAPI {
         ErrorCode.INVALID_PARAMS
       );
     }
-    for (const walletAddress of walletAddresses) requireValidAddress(walletAddress, chain);
+    for (const walletAddress of walletAddresses) requireValidAutoDetectedAddress(walletAddress, chain);
 
     return this.request('/api/v1/profiler/address/counterparties/batch', {
       wallet_addresses: walletAddresses,
