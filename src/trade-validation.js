@@ -1098,7 +1098,10 @@ export function assertSwapOutcome(request, quote, sim, { slippage, expectedSpend
       }
       if (requested <= 0n) throw fail(`bridge exactIn request has a non-positive input amount (${requested}).`);
       const floorSlack = inputIsNative ? EVM_BRIDGE_NATIVE_INPUT_REFUND_SLACK : 0n;
-      const minOutflow = requested > floorSlack ? requested - floorSlack : 1n;
+      // Cap the slack at half the requested amount so the floor stays meaningful
+      // even for very small native bridges (below 2× the slack constant).
+      const appliedSlack = floorSlack < requested / 2n ? floorSlack : requested / 2n;
+      const minOutflow = requested - appliedSlack;
       if (outflow < minOutflow) {
         throw fail(`the bridge moved only ${outflow} of the input token (${inputToken}) out of the wallet, below the requested input (${requested}${inputIsNative ? ' minus native refund slack' : ''}); a bridge must spend its input on the source chain.`);
       }

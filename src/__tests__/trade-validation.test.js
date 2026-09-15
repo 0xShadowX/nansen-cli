@@ -1839,6 +1839,19 @@ describe('assertSwapOutcome', () => {
       .toThrow(/SWAP_OUTCOME_MISMATCH[\s\S]*below the requested input/i);
   });
 
+  it('native exact-in bridge: passes at exactly the slack boundary (outflow = requested - slack)', () => {
+    // 0.1 ETH - 0.002 ETH = 0.098 ETH — outflow is right at the floor.
+    const sim = { deltas: { [NATIVE]: -98000000000000000n }, approvals: [] };
+    expect(() => assertSwapOutcome(nativeBridgeRequest, nativeBridgeQuote, sim, {})).not.toThrow();
+  });
+
+  it('native exact-in bridge: rejects one wei below the slack boundary', () => {
+    // 0.098 ETH - 1 wei is below the floor.
+    const sim = { deltas: { [NATIVE]: -97999999999999999n }, approvals: [] };
+    expect(() => assertSwapOutcome(nativeBridgeRequest, nativeBridgeQuote, sim, {}))
+      .toThrow(/SWAP_OUTCOME_MISMATCH[\s\S]*below the requested input/i);
+  });
+
   it('same-chain native exact-in swap: not affected by bridge floor slack; assertion 2 governs', () => {
     // inputIsNative is true but isBridge is false — the bridge floor block never
     // runs, and the swap is judged by output arrival (assertion 2).
