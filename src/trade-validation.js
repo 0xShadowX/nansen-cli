@@ -1165,6 +1165,12 @@ export function assertSwapOutcome(request, quote, sim, { slippage, expectedSpend
   // ERC-20 siblings and every same-chain swap keep strict-zero. This mirrors the
   // native-only carve-out assertSolanaSwapOutcome already applies for SOL.
   //
+  // Empirically (survey of the shipping quote path, Sept 2026) no reachable Base
+  // token-input bridge route charges such a native fee: the live aggregator for
+  // Base bridges returns tx.value 0 on token inputs, and the other aggregator
+  // returns no Base route at all. So this carve-out is latent defense-in-depth
+  // today, kept because backend routing can change (a new route, or a fee added).
+  //
   // Wallet-owned intermediate-token bridge routes are intentionally unsupported
   // here unless a future quote format identifies the intermediate token and a
   // safe maximum outflow. Treat every ERC-20 sibling as strict-zero so a route
