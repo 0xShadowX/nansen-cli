@@ -1104,7 +1104,12 @@ export function assertSwapOutcome(request, quote, sim, { slippage, expectedSpend
       const appliedSlack = floorSlack < requested / 2n ? floorSlack : requested / 2n;
       const minOutflow = requested - appliedSlack;
       if (outflow < minOutflow) {
-        throw fail(`the bridge moved only ${outflow} of the input token (${inputToken}) out of the wallet, below the requested input (${requested}${inputIsNative ? ' minus native refund slack' : ''}); a bridge must spend its input on the source chain.`);
+        throw fail(
+          `the bridge moved only ${outflow} of the input token (${inputToken}) out of the wallet, ` +
+          `below the minimum required outflow (${minOutflow})` +
+          `${inputIsNative ? ` (requested ${requested} minus native refund slack ${appliedSlack})` : ''}` +
+          `; a bridge must spend its input on the source chain.`
+        );
       }
     } else if (outflow <= 0n) {
       throw fail(`the bridge moved no input token (${inputToken}) out of the wallet; a bridge must spend its input on the source chain.`);

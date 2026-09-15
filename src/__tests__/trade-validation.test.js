@@ -1746,7 +1746,7 @@ describe('assertSwapOutcome', () => {
     const bridgeRequest = { ...exactInRequest, toChain: 'solana' };
     const sim = { deltas: {}, approvals: [] };
     expect(() => assertSwapOutcome(bridgeRequest, exactInQuote, sim, {}))
-      .toThrow(/SWAP_OUTCOME_MISMATCH[\s\S]*below the requested input/i);
+      .toThrow(/SWAP_OUTCOME_MISMATCH[\s\S]*below the minimum required outflow/i);
   });
 
   it('bridge: rejects a partial outflow far below the requested input (intent-relative floor)', () => {
@@ -1756,7 +1756,7 @@ describe('assertSwapOutcome', () => {
     const bridgeRequest = { ...exactInRequest, toChain: 'solana' };
     const sim = { deltas: { [USDC]: -1n }, approvals: [] };
     expect(() => assertSwapOutcome(bridgeRequest, exactInQuote, sim, {}))
-      .toThrow(/SWAP_OUTCOME_MISMATCH[\s\S]*below the requested input/i);
+      .toThrow(/SWAP_OUTCOME_MISMATCH[\s\S]*below the minimum required outflow/i);
   });
 
   it('bridge: fails closed on an unrecognized swap mode (does not fall into the weaker exactOut floor)', () => {
@@ -1825,20 +1825,20 @@ describe('assertSwapOutcome', () => {
   it('native exact-in bridge: rejects zero outflow (no-op bridge)', () => {
     const sim = { deltas: {}, approvals: [] };
     expect(() => assertSwapOutcome(nativeBridgeRequest, nativeBridgeQuote, sim, {}))
-      .toThrow(/SWAP_OUTCOME_MISMATCH[\s\S]*below the requested input/i);
+      .toThrow(/SWAP_OUTCOME_MISMATCH[\s\S]*below the minimum required outflow/i);
   });
 
   it('native exact-in bridge: rejects a far-below-requested outflow beyond refund slack', () => {
     const sim = { deltas: { [NATIVE]: -1n }, approvals: [] }; // nearly nothing spent
     expect(() => assertSwapOutcome(nativeBridgeRequest, nativeBridgeQuote, sim, {}))
-      .toThrow(/SWAP_OUTCOME_MISMATCH[\s\S]*below the requested input/i);
+      .toThrow(/SWAP_OUTCOME_MISMATCH[\s\S]*below the minimum required outflow/i);
   });
 
   it('ERC-20 exact-in bridge: rejects even a 1-unit shortfall (no slack for token input)', () => {
     const bridgeRequest = { ...exactInRequest, toChain: 'solana' };
     const sim = { deltas: { [USDC]: -999999n }, approvals: [] }; // 1 below requested 1,000,000
     expect(() => assertSwapOutcome(bridgeRequest, exactInQuote, sim, {}))
-      .toThrow(/SWAP_OUTCOME_MISMATCH[\s\S]*below the requested input/i);
+      .toThrow(/SWAP_OUTCOME_MISMATCH[\s\S]*below the minimum required outflow/i);
   });
 
   it('native exact-in bridge: passes at exactly the slack boundary (outflow = requested - slack)', () => {
@@ -1851,7 +1851,7 @@ describe('assertSwapOutcome', () => {
     // 0.098 ETH - 1 wei is below the floor.
     const sim = { deltas: { [NATIVE]: -97999999999999999n }, approvals: [] };
     expect(() => assertSwapOutcome(nativeBridgeRequest, nativeBridgeQuote, sim, {}))
-      .toThrow(/SWAP_OUTCOME_MISMATCH[\s\S]*below the requested input/i);
+      .toThrow(/SWAP_OUTCOME_MISMATCH[\s\S]*below the minimum required outflow/i);
   });
 
   it('native exact-in bridge: sub-slack-threshold amount uses half-requested floor (0.003 ETH bridge)', () => {
@@ -1866,7 +1866,7 @@ describe('assertSwapOutcome', () => {
     expect(() => assertSwapOutcome(smallRequest, smallQuote, { deltas: { [NATIVE]: -1500000000000000n }, approvals: [] }, {})).not.toThrow();
     // One wei below: fails.
     expect(() => assertSwapOutcome(smallRequest, smallQuote, { deltas: { [NATIVE]: -1499999999999999n }, approvals: [] }, {}))
-      .toThrow(/SWAP_OUTCOME_MISMATCH[\s\S]*below the requested input/i);
+      .toThrow(/SWAP_OUTCOME_MISMATCH[\s\S]*below the minimum required outflow/i);
   });
 
   it('same-chain native exact-in swap: not affected by bridge floor slack; assertion 2 governs', () => {
