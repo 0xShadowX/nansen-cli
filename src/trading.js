@@ -636,7 +636,6 @@ export function signSolanaTransaction(transactionBase64, privateKeyHex) {
 const SIZE_CHECK_BLOCKHASH = '11111111111111111111111111111111';
 
 function formatInstructionDataForError(value) {
-  if (typeof value === 'string') return value;
   try {
     const s = JSON.stringify(value);
     return s.length > 200 ? s.slice(0, 200) + '…' : s;
