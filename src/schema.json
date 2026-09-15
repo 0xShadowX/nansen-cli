@@ -573,7 +573,7 @@
             },
             "counterparties-batch": {
               "endpoint": "/api/v1/profiler/address/counterparties/batch",
-              "description": "Top counterparties by volume for up to 10 wallets in one request. Results are not aggregated: every row carries the wallet_address it belongs to",
+              "description": "Top counterparties by volume for up to 10 wallets in one request. Results are not aggregated: every row carries the wallet_address it belongs to, returned as contiguous per-wallet blocks ordered by wallet address — raise --limit and page with --page N to reach later wallets",
               "options": {
                 "addresses": {
                   "type": "string",
@@ -587,7 +587,7 @@
                 "chain": {
                   "type": "string",
                   "default": "all",
-                  "description": "Chain to profile every address on. The default 'all' detects each address's chain automatically; naming a chain restricts the request to that ecosystem"
+                  "description": "Chain to profile every address on. One ecosystem per request: EVM and Solana addresses cannot be mixed. The default 'all' auto-detects the ecosystem"
                 },
                 "days": {
                   "type": "number",

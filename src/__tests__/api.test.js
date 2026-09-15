@@ -1139,6 +1139,11 @@ describe('NansenAPI', () => {
         { length: count },
         (_, i) => `0x${String(i + 1).padStart(40, '0')}`
       );
+      // Client-side guards must reject before anything is sent
+      const expectNoFetch = () => {
+        if (LIVE_TEST) return;
+        expect(mockFetch).not.toHaveBeenCalled();
+      };
 
       it('should post wallet_addresses, chain, date and pagination to the batch endpoint', async () => {
         setupMock(MOCK_RESPONSES.addressCounterpartiesBatch);
@@ -1204,47 +1209,62 @@ describe('NansenAPI', () => {
         expect(body.wallet_addresses).toHaveLength(10);
       });
 
-      it('should accept mixed EVM and Solana addresses when chain is all', async () => {
+      it('should send Solana-only batches under the default chain', async () => {
         setupMock(MOCK_RESPONSES.addressCounterpartiesBatch);
 
         await api.addressCounterpartiesBatch({
-          addresses: [WALLET_A, TEST_DATA.solana.address],
+          addresses: [TEST_DATA.solana.address],
           chain: 'all'
         });
 
         const body = expectFetchCalledWith('/api/v1/profiler/address/counterparties/batch');
-        expect(body.wallet_addresses).toEqual([WALLET_A, TEST_DATA.solana.address]);
+        expect(body.wallet_addresses).toEqual([TEST_DATA.solana.address]);
         expect(body.chain).toBe('all');
+      });
+
+      it('should reject a batch that mixes EVM and Solana addresses', async () => {
+        await expect(
+          api.addressCounterpartiesBatch({
+            addresses: [WALLET_A, TEST_DATA.solana.address],
+            chain: 'all'
+          })
+        ).rejects.toThrow(/cannot mix EVM and Solana addresses/);
+        expectNoFetch();
       });
 
       it('should reject a malformed address when chain is all', async () => {
         await expect(
           api.addressCounterpartiesBatch({ addresses: [WALLET_A, '0xtypo'], chain: 'all' })
         ).rejects.toThrow(/0xtypo/);
+        expectNoFetch();
       });
 
       it('should reject a malformed address for a named chain', async () => {
         await expect(
           api.addressCounterpartiesBatch({ addresses: [WALLET_A, 'not-an-address'], chain: 'ethereum' })
         ).rejects.toThrow(/Invalid EVM address format/);
+        expectNoFetch();
       });
 
       it('should reject more than 10 distinct addresses', async () => {
         await expect(
           api.addressCounterpartiesBatch({ addresses: evmAddresses(11), chain: 'ethereum' })
         ).rejects.toThrow(/at most 10 distinct addresses/);
+        expectNoFetch();
       });
 
       it('should require at least one address', async () => {
         await expect(
           api.addressCounterpartiesBatch({ addresses: [], chain: 'ethereum' })
         ).rejects.toThrow(/At least one wallet address is required/);
+        expectNoFetch();
       });
 
       it('should reject a lookback window longer than 90 days', async () => {
         await expect(
           api.addressCounterpartiesBatch({ addresses: [WALLET_A], chain: 'ethereum', days: 120 })
         ).rejects.toThrow(/capped at 90 days/);
+        expectNoFetch();
       });
 
       it('should accept a 90 day window', async () => {
@@ -1267,6 +1287,7 @@ describe('NansenAPI', () => {
         await expect(
           api.addressCounterpartiesBatch({ addresses: [WALLET_A], chain: 'ethereum', days: parseInt('abc', 10) })
         ).rejects.toThrow(/--days must be a positive number/);
+        expectNoFetch();
       });
     });
 

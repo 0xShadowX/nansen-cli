@@ -33,8 +33,11 @@ detects each address's chain and covers the EVM chains in a single call, and tak
 10 addresses at once (every row carries the wallet_address it belongs to):
 
 ```bash
-nansen research profiler counterparties-batch --addresses "$ADDR" --chain all --days 90
+nansen research profiler counterparties-batch --addresses "$ADDR" --chain all --days 90 --limit 50
 ```
+
+Rows come back as contiguous per-wallet blocks ordered by wallet address, so with several
+addresses a small page holds one wallet only — raise `--limit` and page with `--page N`.
 
 `counterparties-batch` is capped at 90 days. For a wider window, fall back to the
 per-chain loop:

@@ -293,7 +293,7 @@ export function formatTable(data) {
   }
 
   // Get columns from first record, prioritize common useful fields
-  const priorityFields = ['token_symbol', 'token_name', 'symbol', 'name', 'address', 'label', 'chain', 'value_usd', 'amount', 'pnl_usd', 'price_usd', 'volume_usd', 'net_flow_usd', 'timestamp', 'block_timestamp'];
+  const priorityFields = ['token_symbol', 'token_name', 'symbol', 'name', 'wallet_address', 'address', 'label', 'chain', 'value_usd', 'amount', 'pnl_usd', 'price_usd', 'volume_usd', 'net_flow_usd', 'timestamp', 'block_timestamp'];
   const allKeys = [...new Set(records.flatMap(r => Object.keys(r)))];
 
   // Sort: priority fields first, then alphabetically
@@ -558,7 +558,15 @@ export function parseAddressList(raw) {
  * one address per line. Shared by the profiler commands that accept --file.
  */
 function readAddressFile(file) {
-  const content = fs.readFileSync(file, 'utf8');
+  let content;
+  try {
+    content = fs.readFileSync(file, 'utf8');
+  } catch (err) {
+    throw new NansenError(
+      `Could not read --file ${file}: ${err.code === 'ENOENT' ? 'no such file' : err.message}`,
+      ErrorCode.INVALID_PARAMS
+    );
+  }
   try {
     const parsed = JSON.parse(content);
     if (!Array.isArray(parsed) || !parsed.every(item => typeof item === 'string')) {

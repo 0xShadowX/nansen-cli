@@ -459,17 +459,13 @@ function requireValidToken(tokenAddress, chain) {
 }
 
 /**
- * Throw if the address is invalid for `chain`. Chain 'all' is auto-detected per
- * address server-side, so accept anything it can route — a valid EVM or Solana
- * address — instead of falling through validateAddress's permissive
- * unknown-chain branch.
+ * Which ecosystem chain 'all' would route this address to, or throw if neither.
+ * validateAddress's unknown-chain branch accepts any non-empty string for 'all',
+ * so classify against the concrete formats instead.
  */
-function requireValidAutoDetectedAddress(address, chain) {
-  if (chain !== 'all') {
-    requireValidAddress(address, chain);
-    return;
-  }
-  if (validateAddress(address, 'ethereum').valid || validateAddress(address, 'solana').valid) return;
+function classifyAutoDetectedAddress(address) {
+  if (validateAddress(address, 'ethereum').valid) return 'EVM';
+  if (validateAddress(address, 'solana').valid) return 'Solana';
   throw new NansenError(
     `Invalid address format: "${address}". With chain "all" every address must be a valid EVM address (0x followed by 40 hex characters) or Solana address (Base58, 32-44 chars).`,
     ErrorCode.INVALID_ADDRESS
@@ -1289,7 +1285,19 @@ export class NansenAPI {
         ErrorCode.INVALID_PARAMS
       );
     }
-    for (const walletAddress of walletAddresses) requireValidAutoDetectedAddress(walletAddress, chain);
+    if (chain === 'all') {
+      // 'all' routes each address to its own ecosystem, but one request cannot
+      // span both — the server rejects a mixed batch, so fail before sending it.
+      const ecosystems = new Set(walletAddresses.map(classifyAutoDetectedAddress));
+      if (ecosystems.size > 1) {
+        throw new NansenError(
+          "A batch cannot mix EVM and Solana addresses. Query them in separate requests (chain='all' for EVM, chain='solana' for Solana).",
+          ErrorCode.INVALID_PARAMS
+        );
+      }
+    } else {
+      for (const walletAddress of walletAddresses) requireValidAddress(walletAddress, chain);
+    }
 
     return this.request('/api/v1/profiler/address/counterparties/batch', {
       wallet_addresses: walletAddresses,

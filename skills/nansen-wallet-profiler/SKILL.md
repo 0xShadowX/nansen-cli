@@ -52,8 +52,10 @@ nansen research profiler counterparties --address <addr> --chain ethereum --days
 
 # Counterparties for up to 10 wallets in one call (max --days 90).
 # Results are not aggregated — every row carries the wallet_address it belongs to.
-# --chain defaults to all, which detects each address's chain; name a chain to restrict it.
-nansen research profiler counterparties-batch --addresses "0xabc,0xdef" --days 30
+# One ecosystem per request: EVM and Solana addresses cannot be mixed; `all` auto-detects it.
+# Rows come back as contiguous per-wallet blocks ordered by wallet address, so a small page
+# holds one wallet only — raise --limit and page with --page N to reach later wallets.
+nansen research profiler counterparties-batch --addresses "0xabc,0xdef" --days 30 --limit 50
 ```
 
 ## Perps (no --chain)

@@ -203,6 +203,26 @@ describe('formatTable', () => {
     // token_symbol should come before zebra (priority field)
     expect(header.indexOf('token_symbol')).toBeLessThan(header.indexOf('zebra'));
   });
+
+  it('should keep wallet_address when a batch row exceeds the column limit', () => {
+    // A batch counterparties row has 9 keys; without priority, wallet_address
+    // sorts last alphabetically and is cut by the 8-column limit — losing the
+    // key that says which input wallet the row belongs to.
+    const data = [{
+      counterparty_address: '0xcp',
+      counterparty_address_label: ['Exchange'],
+      interaction_count: 12,
+      total_volume_usd: 1000,
+      volume_in_usd: 600,
+      volume_out_usd: 400,
+      tokens_info: [],
+      wallet_address: '0xwallet',
+      chain: 'ethereum'
+    }];
+    const header = formatTable(data).split('\n')[0];
+    expect(header).toContain('wallet_address');
+    expect(header.indexOf('wallet_address')).toBeLessThan(header.indexOf('counterparty_address'));
+  });
 });
 
 describe('formatAlertsTable', () => {
@@ -4295,6 +4315,15 @@ describe('profiler counterparties-batch command', () => {
 
     expect(result).toEqual(response);
     expect(result.data.map(row => row.wallet_address)).toEqual([ADDR_A, ADDR_B]);
+  });
+
+  it('should raise an actionable error when --file does not exist', async () => {
+    const missing = path.join(os.tmpdir(), 'nansen-cli-test-missing-addresses.txt');
+    const commands = buildCommands({});
+
+    await expect(
+      commands['profiler'](['counterparties-batch'], mockBatchApi(), {}, { file: missing })
+    ).rejects.toThrow(/Could not read --file .*: no such file/);
   });
 
   it('should be listed in profiler help', async () => {
