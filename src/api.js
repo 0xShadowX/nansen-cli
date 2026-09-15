@@ -386,6 +386,11 @@ const ADDRESS_PATTERNS = {
   bitcoin: /^(1|3|bc1)[a-zA-HJ-NP-Z0-9]{25,62}$/,
 };
 
+// Server-side limits on the batch counterparties endpoint. Checked client-side so
+// an over-limit request fails with an actionable message instead of a 422.
+export const COUNTERPARTIES_BATCH_MAX_ADDRESSES = 10;
+export const COUNTERPARTIES_BATCH_MAX_DAYS = 90;
+
 /**
  * Validate address format for a given chain
  * @param {string} address - The address to validate
@@ -1222,6 +1227,49 @@ export class NansenAPI {
       address,
       chain,
       date: buildDateRange(days),
+      filters,
+      order_by: orderBy,
+      pagination
+    });
+  }
+
+  /**
+   * Batch counterparties for up to 10 distinct wallets in one request.
+   * Results are not aggregated: every row carries the `wallet_address` it belongs to.
+   */
+  async addressCounterpartiesBatch(params = {}) {
+    const { addresses, chain = 'ethereum', filters = {}, orderBy, pagination, days = 30, sourceInput } = params;
+    const list = Array.isArray(addresses) ? addresses : (addresses ? [addresses] : []);
+    const walletAddresses = [...new Set(list.map(a => String(a).trim()).filter(Boolean))];
+
+    if (walletAddresses.length === 0) {
+      throw new NansenError(
+        'At least one wallet address is required. Pass --addresses "0xabc,0xdef"',
+        ErrorCode.MISSING_PARAM
+      );
+    }
+    if (walletAddresses.length > COUNTERPARTIES_BATCH_MAX_ADDRESSES) {
+      throw new NansenError(
+        `Batch counterparties accepts at most ${COUNTERPARTIES_BATCH_MAX_ADDRESSES} distinct addresses per request, got ${walletAddresses.length}. Split them across several requests.`,
+        ErrorCode.INVALID_PARAMS
+      );
+    }
+    if (!Number.isFinite(days) || days < 1) {
+      throw new NansenError('--days must be a positive number', ErrorCode.INVALID_PARAMS);
+    }
+    if (days > COUNTERPARTIES_BATCH_MAX_DAYS) {
+      throw new NansenError(
+        `Batch counterparties is capped at ${COUNTERPARTIES_BATCH_MAX_DAYS} days, got ${days}. Split the window into several requests, or use the single-wallet counterparties command instead.`,
+        ErrorCode.INVALID_PARAMS
+      );
+    }
+    for (const walletAddress of walletAddresses) requireValidAddress(walletAddress, chain);
+
+    return this.request('/api/v1/profiler/address/counterparties/batch', {
+      wallet_addresses: walletAddresses,
+      chain,
+      date: buildDateRange(days),
+      source_input: sourceInput,
       filters,
       order_by: orderBy,
       pagination

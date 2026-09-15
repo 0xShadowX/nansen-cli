@@ -842,3 +842,136 @@ describe('buildResearchCommands handler', () => {
     })).rejects.toThrow(/does not support/);
   });
 });
+
+// =================== profiler counterparties-batch ===================
+
+describe('NansenAPI addressCounterpartiesBatch', () => {
+  let api;
+  let mockFetch;
+  const originalFetch = global.fetch;
+
+  const WALLETS = [
+    '0x28c6c06298d514db089934071355e5743bf21d60',
+    '0x21a31ee1afc51d94c2efccaa2092ad1028285549',
+  ];
+
+  beforeAll(() => {
+    mockFetch = vi.fn();
+    global.fetch = mockFetch;
+    api = new NansenAPI('test-api-key', 'https://api.nansen.ai');
+  });
+
+  afterEach(() => {
+    mockFetch.mockReset();
+  });
+
+  afterAll(() => {
+    global.fetch = originalFetch;
+  });
+
+  function setupMock(response = { pagination: { page: 1, per_page: 10 }, data: [] }) {
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => response });
+  }
+
+  function lastBody() {
+    expect(mockFetch).toHaveBeenCalled();
+    const [url, options] = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+    expect(url).toBe('https://api.nansen.ai/api/v1/profiler/address/counterparties/batch');
+    expect(options.method).toBe('POST');
+    expect(options.headers['Content-Type']).toBe('application/json');
+    return JSON.parse(options.body);
+  }
+
+  it('posts wallet_addresses, chain, date, order_by and pagination to the batch endpoint', async () => {
+    setupMock();
+    await api.addressCounterpartiesBatch({
+      addresses: WALLETS,
+      chain: 'ethereum',
+      days: 7,
+      orderBy: [{ field: 'total_volume_usd', direction: 'DESC' }],
+      pagination: { page: 1, per_page: 2 },
+    });
+
+    const body = lastBody();
+    expect(body.wallet_addresses).toEqual(WALLETS);
+    expect(body.chain).toBe('ethereum');
+    expect(body.date.from).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(body.date.to).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(body.order_by).toEqual([{ field: 'total_volume_usd', direction: 'DESC' }]);
+    expect(body.pagination).toEqual({ page: 1, per_page: 2 });
+    // Optional keys the caller left unset must not reach the wire
+    expect(body.source_input).toBeUndefined();
+    expect(body.filters).toBeUndefined();
+    expect(body.address).toBeUndefined();
+  });
+
+  it('sends source_input and filters only when provided', async () => {
+    setupMock();
+    await api.addressCounterpartiesBatch({
+      addresses: [WALLETS[0]],
+      chain: 'ethereum',
+      sourceInput: 'Tokens',
+      filters: { total_volume_usd: { min: 1000 } },
+    });
+
+    const body = lastBody();
+    expect(body.source_input).toBe('Tokens');
+    expect(body.filters).toEqual({ total_volume_usd: { min: 1000 } });
+  });
+
+  it('dedupes repeated addresses before sending', async () => {
+    setupMock();
+    await api.addressCounterpartiesBatch({
+      addresses: [WALLETS[0], ` ${WALLETS[0]} `, WALLETS[1]],
+      chain: 'ethereum',
+    });
+
+    expect(lastBody().wallet_addresses).toEqual(WALLETS);
+  });
+
+  it('rejects more than 10 distinct addresses without calling the API', async () => {
+    const tooMany = Array.from(
+      { length: 11 },
+      (_, i) => `0x${String(i + 1).padStart(40, '0')}`
+    );
+
+    await expect(api.addressCounterpartiesBatch({ addresses: tooMany, chain: 'ethereum' }))
+      .rejects.toThrow(/at most 10 distinct addresses/);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('counts duplicates once against the 10-address limit', async () => {
+    setupMock();
+    const ten = Array.from(
+      { length: 10 },
+      (_, i) => `0x${String(i + 1).padStart(40, '0')}`
+    );
+
+    await api.addressCounterpartiesBatch({ addresses: [...ten, ten[0]], chain: 'ethereum' });
+    expect(lastBody().wallet_addresses).toHaveLength(10);
+  });
+
+  it('rejects a lookback window longer than 90 days without calling the API', async () => {
+    await expect(api.addressCounterpartiesBatch({ addresses: WALLETS, chain: 'ethereum', days: 120 }))
+      .rejects.toThrow(/capped at 90 days/);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('accepts a 90 day window', async () => {
+    setupMock();
+    await api.addressCounterpartiesBatch({ addresses: WALLETS, chain: 'ethereum', days: 90 });
+    expect(lastBody().wallet_addresses).toEqual(WALLETS);
+  });
+
+  it('rejects an address that is malformed for the requested chain', async () => {
+    await expect(api.addressCounterpartiesBatch({ addresses: [WALLETS[0], 'not-an-address'], chain: 'ethereum' }))
+      .rejects.toThrow(NansenError);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('requires at least one address', async () => {
+    await expect(api.addressCounterpartiesBatch({ addresses: [], chain: 'ethereum' }))
+      .rejects.toThrow(/At least one wallet address is required/);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+});

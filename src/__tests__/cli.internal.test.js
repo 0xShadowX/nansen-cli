@@ -4207,6 +4207,69 @@ describe('profiler compare command', () => {
   });
 });
 
+// =================== profiler counterparties-batch ===================
+
+describe('profiler counterparties-batch command', () => {
+  const ADDR_A = '0x0000000000000000000000000000000000000001';
+  const ADDR_B = '0x0000000000000000000000000000000000000002';
+
+  it('should appear in SCHEMA', () => {
+    const batch = SCHEMA.commands.research.subcommands['profiler'].subcommands['counterparties-batch'];
+    expect(batch).toBeDefined();
+    expect(batch.endpoint).toBe('/api/v1/profiler/address/counterparties/batch');
+    expect(batch.options.addresses.required).toBe(true);
+    expect(batch.options.days.default).toBe(30);
+  });
+
+  it('should pass comma-separated --addresses through to the batch method', async () => {
+    const mockApi = {
+      addressCounterpartiesBatch: vi.fn().mockResolvedValue({ pagination: {}, data: [] }),
+    };
+    const commands = buildCommands({});
+    await commands['profiler'](['counterparties-batch'], mockApi, {}, {
+      addresses: `${ADDR_A}, ${ADDR_B}`,
+      chain: 'ethereum',
+      days: '7',
+      page: '1',
+      limit: '2'
+    });
+
+    expect(mockApi.addressCounterpartiesBatch).toHaveBeenCalledWith(expect.objectContaining({
+      addresses: [ADDR_A, ADDR_B],
+      chain: 'ethereum',
+      days: 7,
+      pagination: { page: 1, per_page: 2 }
+    }));
+  });
+
+  it('should return the response unchanged so rows keep their wallet_address', async () => {
+    const response = {
+      pagination: { page: 1, per_page: 2, total_pages: 1 },
+      data: [
+        { wallet_address: ADDR_A, counterparty_address: '0xaaa', chain: 'ethereum', interaction_count: 3 },
+        { wallet_address: ADDR_B, counterparty_address: '0xbbb', chain: 'ethereum', interaction_count: 1 }
+      ]
+    };
+    const mockApi = {
+      addressCounterpartiesBatch: vi.fn().mockResolvedValue(response),
+    };
+    const commands = buildCommands({});
+    const result = await commands['profiler'](['counterparties-batch'], mockApi, {}, {
+      addresses: `${ADDR_A},${ADDR_B}`,
+      chain: 'ethereum'
+    });
+
+    expect(result).toEqual(response);
+    expect(result.data.map(row => row.wallet_address)).toEqual([ADDR_A, ADDR_B]);
+  });
+
+  it('should be listed in profiler help', async () => {
+    const commands = buildCommands({});
+    const result = await commands['profiler'](['help'], null, {}, {});
+    expect(result.commands).toContain('counterparties-batch');
+  });
+});
+
 // =================== parseAddressList ===================
 
 describe('parseAddressList', () => {
