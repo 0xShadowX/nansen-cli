@@ -7586,6 +7586,30 @@ describe('Relay Solana-source bridge: raw-instruction transaction shape', () => 
       .rejects.toThrow(/not valid hex/);
   });
 
+  it('rejects non-string instruction data with the invalid-hex error, without fetching the blockhash', async () => {
+    const signer = generateSolanaWallet().address;
+    const badQuote = (data) => ({
+      instructions: [{
+        keys: [{ pubkey: signer, isSigner: true, isWritable: true }],
+        programId: generateSolanaWallet().address,
+        data,
+      }],
+    });
+
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+
+    await expect(compileRawSolanaTransaction(badQuote([1, 2, 3]), 'http://unused', async () => signer))
+      .rejects.toThrow(/instruction data is not valid hex/);
+    await expect(compileRawSolanaTransaction(badQuote({ bytes: [1, 2, 3] }), 'http://unused', async () => signer))
+      .rejects.toThrow(/instruction data is not valid hex/);
+    await expect(compileRawSolanaTransaction(badQuote(123), 'http://unused', async () => signer))
+      .rejects.toThrow(/instruction data is not valid hex/);
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
   it('normalize dispatches the raw-instructions shape even when a data field is also present', async () => {
     const signer = generateSolanaWallet().address;
     // A hypothetical future shape carrying BOTH instructions and data: the

@@ -312,18 +312,49 @@ export function createSvmPaymentPayload(
  * Fetch recent blockhash from Solana RPC.
  */
 export async function fetchRecentBlockhash(rpcUrl = 'https://api.mainnet-beta.solana.com') {
-  const response = await fetch(rpcUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      jsonrpc: '2.0',
-      id: 1,
-      method: 'getLatestBlockhash',
-      params: [{ commitment: 'finalized' }],
-    }),
-  });
-  const data = await response.json();
-  return data.result.value.blockhash;
+  let response;
+  try {
+    response = await fetch(rpcUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'getLatestBlockhash',
+        params: [{ commitment: 'finalized' }],
+      }),
+    });
+  } catch (err) {
+    throw new Error(
+      `Solana RPC unavailable while fetching a recent blockhash. Retry or configure a different RPC endpoint. ${String(err.message ?? err)}`,
+      { cause: err }
+    );
+  }
+
+  let data;
+  try {
+    data = await response.json();
+  } catch {
+    throw new Error(
+      'Solana RPC returned an invalid response while fetching a recent blockhash. Retry or configure a different RPC endpoint.'
+    );
+  }
+
+  if (data?.error) {
+    const detail = data.error.message || data.error.code || 'unknown RPC error';
+    throw new Error(
+      `Solana RPC failed while fetching a recent blockhash: ${detail}. Retry or configure a different RPC endpoint.`
+    );
+  }
+
+  const blockhash = data?.result?.value?.blockhash;
+  if (typeof blockhash !== 'string' || blockhash.length === 0) {
+    throw new Error(
+      'Solana RPC returned no recent blockhash. Retry or configure a different RPC endpoint.'
+    );
+  }
+
+  return blockhash;
 }
 
 /**
