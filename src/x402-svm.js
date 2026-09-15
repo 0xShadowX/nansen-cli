@@ -341,7 +341,10 @@ export async function fetchRecentBlockhash(rpcUrl = 'https://api.mainnet-beta.so
   }
 
   if (data?.error) {
-    const detail = data.error.message || data.error.code || 'unknown RPC error';
+    const detail =
+      data.error.message != null ? String(data.error.message)
+      : data.error.code  != null ? String(data.error.code)
+      : 'unknown RPC error';
     throw new Error(
       `Solana RPC failed while fetching a recent blockhash: ${detail}. Retry or configure a different RPC endpoint.`
     );
