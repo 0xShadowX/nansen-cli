@@ -1485,6 +1485,18 @@ describe('assertSwapOutcome', () => {
   };
   const exactInQuote = { inputMint: USDC, outputMint: DAI, inAmount: '1000000', outAmount: '1000000' };
 
+  // exactIn native-ETH bridge: 0.1 ETH → USDC cross-chain, used by refund-slack tests.
+  const nativeBridgeRequest = {
+    chain: 'base', walletAddress: '0xwallet',
+    fromToken: NATIVE, toToken: USDC,
+    swapMode: 'exactIn', toChain: 'solana',
+    amount: '100000000000000000', maxInputAmount: '100000000000000000', // 0.1 ETH
+  };
+  const nativeBridgeQuote = {
+    inputMint: NATIVE, outputMint: USDC,
+    inAmount: '100000000000000000', outAmount: '1000000',
+  };
+
   it('passes a benign exactIn swap within cap and above min output', () => {
     const sim = { deltas: { [USDC]: -1000000n, [DAI]: 1000000n }, approvals: [] };
     expect(() => assertSwapOutcome(exactInRequest, exactInQuote, sim, { slippage: 0.03, expectedSpenders: [ROUTER] }))
@@ -1804,16 +1816,6 @@ describe('assertSwapOutcome', () => {
   // Some routers receive msg.value = request.amount and refund a small unused
   // remainder, making the net outflow slightly below the requested input.
   // ---------------------------------------------------------------------------
-  const nativeBridgeRequest = {
-    chain: 'base', walletAddress: '0xwallet',
-    fromToken: NATIVE, toToken: USDC,
-    swapMode: 'exactIn', toChain: 'solana',
-    amount: '100000000000000000', maxInputAmount: '100000000000000000', // 0.1 ETH
-  };
-  const nativeBridgeQuote = {
-    inputMint: NATIVE, outputMint: USDC,
-    inAmount: '100000000000000000', outAmount: '1000000',
-  };
 
   it('native exact-in bridge: passes when outflow is within the refund slack (0.001 ETH below requested)', () => {
     const sim = { deltas: { [NATIVE]: -99000000000000000n }, approvals: [] }; // 0.001 ETH refunded
