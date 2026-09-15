@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.44.3
+
+### Patch Changes
+
+- [#621](https://github.com/nansen-ai/nansen-cli/pull/621) [`6ece0a1`](https://github.com/nansen-ai/nansen-cli/commit/6ece0a14290444472f0784115e678e73deb3981f) Thanks [@kome12](https://github.com/kome12)! - Validate alerts list pagination flags before fetching alerts.
+
+- [#620](https://github.com/nansen-ai/nansen-cli/pull/620) [`bf8f40f`](https://github.com/nansen-ai/nansen-cli/commit/bf8f40f840495d7a92d95d105d131b5406a10e22) Thanks [@Radovenchyk](https://github.com/Radovenchyk)! - Fix `nansen agent` throwing a raw `AbortError` instead of a `NansenError(TIMEOUT)` when the request timeout fires while reading the SSE response body (as opposed to during the initial connection). Both streaming and `--json` output modes now report a consistent timeout error regardless of which phase of the request the abort happened in.
+
+- [#618](https://github.com/nansen-ai/nansen-cli/pull/618) [`1e08a15`](https://github.com/nansen-ai/nansen-cli/commit/1e08a150295b44768ce954b9628de10e291924f4) Thanks [@Radovenchyk](https://github.com/Radovenchyk)! - Fix `consumeSSEStream` silently dropping the final SSE event when the stream closes without a trailing blank line (e.g. a `finish` event carrying `conversation_id`, or a trailing `delta` chunk).
+
+- [#623](https://github.com/nansen-ai/nansen-cli/pull/623) [`9ae1dc2`](https://github.com/nansen-ai/nansen-cli/commit/9ae1dc2d871b04fae749c7126f970258bf58f41e) Thanks [@kome12](https://github.com/kome12)! - Improve Solana raw-instruction bridge error handling for RPC failures and malformed instruction data.
+
+- [#622](https://github.com/nansen-ai/nansen-cli/pull/622) [`d86aae9`](https://github.com/nansen-ai/nansen-cli/commit/d86aae9e8d45d0427fbc0d51363529b5873d8dd0) Thanks [@kome12](https://github.com/kome12)! - Tolerate small refunded native input amounts during bridge outcome verification.
+
+- [#617](https://github.com/nansen-ai/nansen-cli/pull/617) [`d048c0f`](https://github.com/nansen-ai/nansen-cli/commit/d048c0f3bb4e5ded6c42324ec7d3e32b58bfd4ee) Thanks [@teyrebaz33](https://github.com/teyrebaz33)! - Fix x402 auto-payment via WalletConnect signing a payment authorization from any connected EVM account instead of verifying the WalletConnect session is actually approved for the payment's chain.
+
+  `handleX402Payment` resolved its signer with its own `checkWalletConnection()` helper and took `wallet.accounts[0]?.address` with no chain filtering at all -- the same defect class fixed in `getWalletConnectAddress` for `nansen transfer`/`nansen trade execute` (see the WalletConnect chain-scoped signing fix), just left unguarded here because this path never reused that helper. Because EVM addresses are identical across chains, a WalletConnect session approved only for, say, Base could be silently used to authorize an x402 payment on BNB Smart Chain or X Layer -- the other two EVM networks Nansen's x402 payments support.
+
+  `handleX402Payment` now resolves its signer via `getWalletConnectAddress('evm', chainId)`, scoped to the exact chain of the selected payment requirement, and refuses to pay with a clear error when no WalletConnect session is approved for that chain. The now-unused, duplicate `checkWalletConnection` helper was removed.
+
 ## 1.44.2
 
 ### Patch Changes
