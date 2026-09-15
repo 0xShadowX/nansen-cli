@@ -7480,6 +7480,10 @@ describe('Solana exactOut ceiling — requires an explicit --max-input', () => {
 });
 
 describe('Relay Solana-source bridge: raw-instruction transaction shape', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it('execute compiles and signs a Relay raw {instructions} quote instead of crashing', async () => {
     createWallet('default', 'testpass');
     process.env.NANSEN_WALLET_PASSWORD = 'testpass';
@@ -7566,7 +7570,6 @@ describe('Relay Solana-source bridge: raw-instruction transaction shape', () => 
     expect(signedTx.subarray(1, 65).every(b => b === 0)).toBe(false);
 
     delete process.env.NANSEN_WALLET_PASSWORD;
-    vi.unstubAllGlobals();
   });
 
   it('rejects an instruction with malformed hex data instead of silently truncating it', async () => {
@@ -7607,7 +7610,6 @@ describe('Relay Solana-source bridge: raw-instruction transaction shape', () => 
       .rejects.toThrow(/instruction data is not valid hex/);
 
     expect(fetchSpy).not.toHaveBeenCalled();
-    vi.unstubAllGlobals();
   });
 
   it('normalize dispatches the raw-instructions shape even when a data field is also present', async () => {
@@ -7629,7 +7631,6 @@ describe('Relay Solana-source bridge: raw-instruction transaction shape', () => 
     };
     const b64 = await normalizeSolanaTransaction(mixed, 'http://unused', async () => signer);
     expect(Buffer.from(b64, 'base64').length).toBeGreaterThan(0);
-    vi.unstubAllGlobals();
   });
 
   it('rejects an instruction set that requires more than one signature', async () => {
