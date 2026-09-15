@@ -331,6 +331,13 @@ export async function fetchRecentBlockhash(rpcUrl = 'https://api.mainnet-beta.so
     );
   }
 
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    throw new Error(
+      `Solana RPC returned HTTP ${response.status} while fetching a recent blockhash. Retry or configure a different RPC endpoint. ${text.slice(0, 100)}`
+    );
+  }
+
   let data;
   try {
     data = await response.json();

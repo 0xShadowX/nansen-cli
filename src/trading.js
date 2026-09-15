@@ -638,7 +638,8 @@ const SIZE_CHECK_BLOCKHASH = '11111111111111111111111111111111';
 function formatInstructionDataForError(value) {
   if (typeof value === 'string') return value;
   try {
-    return JSON.stringify(value);
+    const s = JSON.stringify(value);
+    return s.length > 200 ? s.slice(0, 200) + '…' : s;
   } catch {
     return String(value);
   }

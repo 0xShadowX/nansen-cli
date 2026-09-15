@@ -179,6 +179,7 @@ describe('fetchRecentBlockhash', () => {
   it('returns the recent blockhash from a valid RPC response', async () => {
     const bh = base58Encode(crypto.randomBytes(32));
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
       json: async () => ({ result: { value: { blockhash: bh } } }),
     }));
     await expect(fetchRecentBlockhash('http://unused')).resolves.toBe(bh);
@@ -186,6 +187,7 @@ describe('fetchRecentBlockhash', () => {
 
   it('surfaces JSON-RPC errors as actionable blockhash failures', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
       json: async () => ({ error: { code: 429, message: 'rate limited' } }),
     }));
     await expect(fetchRecentBlockhash('http://unused'))
@@ -194,10 +196,21 @@ describe('fetchRecentBlockhash', () => {
 
   it('rejects a response missing result.value.blockhash with an actionable message', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
       json: async () => ({ result: {} }),
     }));
     await expect(fetchRecentBlockhash('http://unused'))
       .rejects.toThrow(/Solana RPC returned no recent blockhash/);
+  });
+
+  it('rejects a non-2xx HTTP response with the status code', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false,
+      status: 503,
+      text: async () => 'Service Unavailable',
+    }));
+    await expect(fetchRecentBlockhash('http://unused'))
+      .rejects.toThrow(/Solana RPC returned HTTP 503/);
   });
 
   it('rejects a fetch/network failure with an actionable message', async () => {

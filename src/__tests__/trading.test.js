@@ -7491,7 +7491,7 @@ describe('Relay Solana-source bridge: raw-instruction transaction shape', () => 
       const urlStr = typeof url === 'string' ? url : url.toString();
       const body = opts?.body ? (() => { try { return JSON.parse(opts.body); } catch { return {}; } })() : {};
       if (body.method === 'getLatestBlockhash') {
-        return Promise.resolve({ json: () => Promise.resolve({ result: { value: { blockhash: FAKE_BLOCKHASH } } }) });
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ result: { value: { blockhash: FAKE_BLOCKHASH } } }) });
       }
       if (urlStr.includes('trading-api') && urlStr.endsWith('/execute')) {
         executeBodies.push(body);
@@ -7616,6 +7616,7 @@ describe('Relay Solana-source bridge: raw-instruction transaction shape', () => 
     // Relay compiler must win, not the OKX base58-decode branch. base58Decode
     // would throw on this non-base58 data, so reaching it at all is the failure.
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
       json: () => Promise.resolve({ result: { value: { blockhash: generateSolanaWallet().address } } }),
     }));
     const mixed = {
