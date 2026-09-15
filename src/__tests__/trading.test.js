@@ -7480,6 +7480,10 @@ describe('Solana exactOut ceiling — requires an explicit --max-input', () => {
 });
 
 describe('Relay Solana-source bridge: raw-instruction transaction shape', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it('execute compiles and signs a Relay raw {instructions} quote instead of crashing', async () => {
     createWallet('default', 'testpass');
     process.env.NANSEN_WALLET_PASSWORD = 'testpass';
@@ -7491,7 +7495,7 @@ describe('Relay Solana-source bridge: raw-instruction transaction shape', () => 
       const urlStr = typeof url === 'string' ? url : url.toString();
       const body = opts?.body ? (() => { try { return JSON.parse(opts.body); } catch { return {}; } })() : {};
       if (body.method === 'getLatestBlockhash') {
-        return Promise.resolve({ json: () => Promise.resolve({ result: { value: { blockhash: FAKE_BLOCKHASH } } }) });
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ result: { value: { blockhash: FAKE_BLOCKHASH } } }) });
       }
       if (urlStr.includes('trading-api') && urlStr.endsWith('/execute')) {
         executeBodies.push(body);
@@ -7566,7 +7570,6 @@ describe('Relay Solana-source bridge: raw-instruction transaction shape', () => 
     expect(signedTx.subarray(1, 65).every(b => b === 0)).toBe(false);
 
     delete process.env.NANSEN_WALLET_PASSWORD;
-    vi.unstubAllGlobals();
   });
 
   it('rejects an instruction with malformed hex data instead of silently truncating it', async () => {
@@ -7586,12 +7589,36 @@ describe('Relay Solana-source bridge: raw-instruction transaction shape', () => 
       .rejects.toThrow(/not valid hex/);
   });
 
+  it('rejects non-string instruction data with the invalid-hex error, without fetching the blockhash', async () => {
+    const signer = generateSolanaWallet().address;
+    const badQuote = (data) => ({
+      instructions: [{
+        keys: [{ pubkey: signer, isSigner: true, isWritable: true }],
+        programId: generateSolanaWallet().address,
+        data,
+      }],
+    });
+
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+
+    await expect(compileRawSolanaTransaction(badQuote([1, 2, 3]), 'http://unused', async () => signer))
+      .rejects.toThrow(/instruction data is not valid hex/);
+    await expect(compileRawSolanaTransaction(badQuote({ bytes: [1, 2, 3] }), 'http://unused', async () => signer))
+      .rejects.toThrow(/instruction data is not valid hex/);
+    await expect(compileRawSolanaTransaction(badQuote(123), 'http://unused', async () => signer))
+      .rejects.toThrow(/instruction data is not valid hex/);
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it('normalize dispatches the raw-instructions shape even when a data field is also present', async () => {
     const signer = generateSolanaWallet().address;
     // A hypothetical future shape carrying BOTH instructions and data: the
     // Relay compiler must win, not the OKX base58-decode branch. base58Decode
     // would throw on this non-base58 data, so reaching it at all is the failure.
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
       json: () => Promise.resolve({ result: { value: { blockhash: generateSolanaWallet().address } } }),
     }));
     const mixed = {
@@ -7604,7 +7631,6 @@ describe('Relay Solana-source bridge: raw-instruction transaction shape', () => 
     };
     const b64 = await normalizeSolanaTransaction(mixed, 'http://unused', async () => signer);
     expect(Buffer.from(b64, 'base64').length).toBeGreaterThan(0);
-    vi.unstubAllGlobals();
   });
 
   it('rejects an instruction set that requires more than one signature', async () => {

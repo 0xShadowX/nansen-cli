@@ -635,8 +635,22 @@ export function signSolanaTransaction(transactionBase64, privateKeyHex) {
 // blockhash fetch (no wasted RPC round trip on a request we're going to reject).
 const SIZE_CHECK_BLOCKHASH = '11111111111111111111111111111111';
 
+function formatInstructionDataForError(value) {
+  try {
+    const s = JSON.stringify(value);
+    return s.length > 200 ? s.slice(0, 200) + '…' : s;
+  } catch {
+    return String(value);
+  }
+}
+
 function decodeInstructionData(hex) {
   if (hex == null || hex === '') return Buffer.alloc(0); // some instructions legitimately carry no data
+  if (typeof hex !== 'string') {
+    throw new Error(
+      `Cannot compile Solana transaction: instruction data is not valid hex (${formatInstructionDataForError(hex)})`
+    );
+  }
   const body = hex.startsWith('0x') ? hex.slice(2) : hex;
   // Buffer.from(str, 'hex') silently drops a trailing odd nibble and stops at
   // the first non-hex character, so it would decode malformed data into a
