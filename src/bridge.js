@@ -912,8 +912,13 @@ export function assertEvmBridgeStepIntent(txData, intent, context = 'Bridge EVM 
       const scoped = encodeApproveCalldata(spender, amount, { maxAllowance });
       return { data: scoped };
     } catch (err) {
+      // encodeApproveCalldata messages already end with their own imperative
+      // ("Refusing to sign[ an … approval].") — drop it so we don't stack two
+      // directives before appending the single actionable next step every
+      // sibling refusal ends with.
+      const reason = err.message.replace(/\s*Refusing to sign[^.]*\.\s*$/, '');
       throw new CommandError(
-        `${context}: ${err.message} Request a new quote.`,
+        `${context}: ${reason} Request a new quote.`,
         'AMOUNT_MISMATCH',
       );
     }

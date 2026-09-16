@@ -80,6 +80,18 @@ describe('assertEvmBridgeStepIntent — approve leg', () => {
     expect(e.message).toMatch(/Request a new quote/);
   });
 
+  it('refuses a zero-amount approve without stacking two imperatives in the message', () => {
+    // A tampered response could send approve(ROUTER, 0). encodeApproveCalldata
+    // rejects it with its own "Refusing to sign an approval." clause; the catch
+    // wrapper must not append a second imperative on top of the actionable one.
+    const txData = { to: USDC, data: approveCalldata(ROUTER, 0n), value: '0' };
+    const e = caught(() => assertEvmBridgeStepIntent(txData, intent));
+    expect(e.code).toBe('AMOUNT_MISMATCH');
+    expect(e.message).toMatch(/must be positive/);
+    expect(e.message).toMatch(/Request a new quote\.$/);
+    expect(e.message).not.toMatch(/Refusing to sign/);
+  });
+
   it('re-encodes a valid approve at exactly the requested cap', () => {
     const txData = { to: USDC, data: approveCalldata(ROUTER, 2000000n), value: '0' };
     const { data } = assertEvmBridgeStepIntent(txData, intent);
