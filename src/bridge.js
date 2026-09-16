@@ -900,6 +900,10 @@ export function assertEvmBridgeStepIntent(txData, intent, context = 'Bridge EVM 
     // already validated against BRIDGE_DEPOSIT_TARGETS above, and amount was
     // already parsed as a BigInt by decodeErc20Approve — so AMOUNT_MISMATCH is
     // the correct code for everything that can actually reach the catch.
+    // NB: this rests on every BRIDGE_DEPOSIT_TARGETS entry being a valid 20-byte
+    // address. If one were ever a zero/malformed address, encodeApproveCalldata's
+    // assertValidApprovalSpender would throw a spender-shape error that this catch
+    // would mis-code as AMOUNT_MISMATCH — keep that constant's entries valid.
     const maxAllowance = requireAmountAnchor(intent, context);
     try {
       const scoped = encodeApproveCalldata(spender, amount, { maxAllowance });
