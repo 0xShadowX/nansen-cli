@@ -772,14 +772,16 @@ function decodeBridgeDeposit(data) {
 // fresh means the output is canonical regardless of the input's upper bits).
 // The relay id word is opaque — lowercased to canonical form; its value is
 // preserved (a bytes32 is binary, so case carries no meaning on-chain).
-// id is always exactly 64 hex chars: decodeBridgeDeposit returns null unless
-// data.length === 266, and w(3) slices a fixed 64-char window of that string.
+// decodeBridgeDeposit already guarantees id is exactly 64 hex chars (it returns
+// null unless data.length === 266 and the id word matches /^[0-9a-fA-F]{64}$/),
+// so the padStart below is a no-op today — kept for symmetry with the other
+// words and to stay correct if that invariant is ever loosened.
 function encodeBridgeDeposit({ depositor, token, amount, id }) {
   return BRIDGE_DEPOSIT_SELECTOR
     + depositor.slice(2).toLowerCase().padStart(64, '0')
     + token.slice(2).toLowerCase().padStart(64, '0')
     + amount.toString(16).padStart(64, '0')
-    + id.toLowerCase();
+    + id.toLowerCase().padStart(64, '0');
 }
 
 // Bind a server-supplied EVM bridge transaction to the user's intent before

@@ -23,6 +23,20 @@ const approveCalldata = (spender, amount) => '0x095ea7b3' + word(spender) + word
 
 const intent = { chain: 'base', signerAddress: SIGNER, requestedAmountBaseUnits: '2000000' };
 
+// Run `fn`, assert it threw, and return the error — so a single invocation can
+// be asserted for both message and code. The alternative (an expect().toThrow()
+// followed by a separate try/catch that inspects e.code) passes vacuously if the
+// second call ever stops throwing: the code assertion then sits in a catch block
+// that is never entered, and the test still goes green. This fails loudly.
+function caught(fn) {
+  try {
+    fn();
+  } catch (e) {
+    return e;
+  }
+  throw new Error('expected the call to throw, but it returned normally');
+}
+
 describe('assertEvmBridgeStepIntent — approve leg', () => {
   it('refuses an approve sent to a contract other than the origin chain USDC', () => {
     // A spender==ROUTER and amount<=requested calldata that targets some other
@@ -30,55 +44,40 @@ describe('assertEvmBridgeStepIntent — approve leg', () => {
     // checks alone — the approve's own `to` must also be pinned.
     const otherToken = '0x' + 'cd'.repeat(20);
     const txData = { to: otherToken, data: approveCalldata(ROUTER, 2000000n), value: '0' };
-    expect(() => assertEvmBridgeStepIntent(txData, intent)).toThrow(/unexpected contract/);
-    try {
-      assertEvmBridgeStepIntent(txData, intent);
-    } catch (e) {
-      expect(e.code).toBe('UNEXPECTED_ACTION');
-    }
+    const e = caught(() => assertEvmBridgeStepIntent(txData, intent));
+    expect(e.message).toMatch(/unexpected contract/);
+    expect(e.code).toBe('UNEXPECTED_ACTION');
   });
 
   it('refuses approve(attacker, MAX_UINT256)', () => {
     const txData = { to: USDC, data: approveCalldata(ATTACKER, MAX_UINT256), value: '0' };
-    expect(() => assertEvmBridgeStepIntent(txData, intent)).toThrow(/unexpected spender/);
-    try {
-      assertEvmBridgeStepIntent(txData, intent);
-    } catch (e) {
-      expect(e.code).toBe('UNEXPECTED_ACTION');
-    }
+    const e = caught(() => assertEvmBridgeStepIntent(txData, intent));
+    expect(e.message).toMatch(/unexpected spender/);
+    expect(e.code).toBe('UNEXPECTED_ACTION');
   });
 
   it('refuses approve(ROUTER, MAX_UINT256) — proves the MAX guard, not just the spender guard', () => {
     const txData = { to: USDC, data: approveCalldata(ROUTER, MAX_UINT256), value: '0' };
-    expect(() => assertEvmBridgeStepIntent(txData, intent)).toThrow(/unlimited/);
-    try {
-      assertEvmBridgeStepIntent(txData, intent);
-    } catch (e) {
-      expect(e.code).toBe('AMOUNT_MISMATCH'); // intentional: unlimited approval is an amount mismatch
-    }
+    const e = caught(() => assertEvmBridgeStepIntent(txData, intent));
+    expect(e.message).toMatch(/unlimited/);
+    expect(e.code).toBe('AMOUNT_MISMATCH'); // intentional: unlimited approval is an amount mismatch
   });
 
   it('refuses an approve amount over the requested cap with AMOUNT_MISMATCH code', () => {
     const txData = { to: USDC, data: approveCalldata(ROUTER, 2000001n), value: '0' };
-    expect(() => assertEvmBridgeStepIntent(txData, intent)).toThrow(/exceeds the request's maximum input/);
-    try {
-      assertEvmBridgeStepIntent(txData, intent);
-    } catch (e) {
-      expect(e.code).toBe('AMOUNT_MISMATCH');
-      expect(e.message).toMatch(/Request a new quote/);
-    }
+    const e = caught(() => assertEvmBridgeStepIntent(txData, intent));
+    expect(e.message).toMatch(/exceeds the request's maximum input/);
+    expect(e.code).toBe('AMOUNT_MISMATCH');
+    expect(e.message).toMatch(/Request a new quote/);
   });
 
   it('refuses when requestedAmountBaseUnits is a non-numeric string', () => {
     const txData = { to: USDC, data: approveCalldata(ROUTER, 2000000n), value: '0' };
     const badAnchor = { ...intent, requestedAmountBaseUnits: 'not-a-number' };
-    expect(() => assertEvmBridgeStepIntent(txData, badAnchor)).toThrow(/not a valid integer/);
-    try {
-      assertEvmBridgeStepIntent(txData, badAnchor);
-    } catch (e) {
-      expect(e.code).toBe('AMOUNT_MISMATCH');
-      expect(e.message).toMatch(/Request a new quote/);
-    }
+    const e = caught(() => assertEvmBridgeStepIntent(txData, badAnchor));
+    expect(e.message).toMatch(/not a valid integer/);
+    expect(e.code).toBe('AMOUNT_MISMATCH');
+    expect(e.message).toMatch(/Request a new quote/);
   });
 
   it('re-encodes a valid approve at exactly the requested cap', () => {
@@ -91,24 +90,18 @@ describe('assertEvmBridgeStepIntent — approve leg', () => {
   it('refuses when no reviewed amount was recorded to cap against', () => {
     const txData = { to: USDC, data: approveCalldata(ROUTER, 2000000n), value: '0' };
     const noAnchor = { ...intent, requestedAmountBaseUnits: null };
-    expect(() => assertEvmBridgeStepIntent(txData, noAnchor)).toThrow(/AMOUNT_MISMATCH|no reviewed amount/);
-    try {
-      assertEvmBridgeStepIntent(txData, noAnchor);
-    } catch (e) {
-      expect(e.code).toBe('AMOUNT_MISMATCH');
-    }
+    const e = caught(() => assertEvmBridgeStepIntent(txData, noAnchor));
+    expect(e.message).toMatch(/AMOUNT_MISMATCH|no reviewed amount/);
+    expect(e.code).toBe('AMOUNT_MISMATCH');
   });
 });
 
 describe('assertEvmBridgeStepIntent — deposit leg', () => {
   it('refuses a deposit sent to an unexpected `to`', () => {
     const txData = { to: ATTACKER, data: depositCalldata(), value: '0' };
-    expect(() => assertEvmBridgeStepIntent(txData, intent)).toThrow(/unexpected contract/);
-    try {
-      assertEvmBridgeStepIntent(txData, intent);
-    } catch (e) {
-      expect(e.code).toBe('UNEXPECTED_ACTION');
-    }
+    const e = caught(() => assertEvmBridgeStepIntent(txData, intent));
+    expect(e.message).toMatch(/unexpected contract/);
+    expect(e.code).toBe('UNEXPECTED_ACTION');
   });
 
   it('refuses the real `to` with an unexpected selector', () => {
@@ -144,12 +137,9 @@ describe('assertEvmBridgeStepIntent — deposit leg', () => {
 
   it('refuses when arg0 (depositor) is redirected away from the signer', () => {
     const txData = { to: ROUTER, data: depositCalldata({ depositor: ATTACKER }), value: '0' };
-    expect(() => assertEvmBridgeStepIntent(txData, intent)).toThrow(/SIGNER_MISMATCH|signing wallet/);
-    try {
-      assertEvmBridgeStepIntent(txData, intent);
-    } catch (e) {
-      expect(e.code).toBe('SIGNER_MISMATCH');
-    }
+    const e = caught(() => assertEvmBridgeStepIntent(txData, intent));
+    expect(e.message).toMatch(/SIGNER_MISMATCH|signing wallet/);
+    expect(e.code).toBe('SIGNER_MISMATCH');
   });
 
   it('refuses when arg1 (token) is not the origin chain USDC', () => {
@@ -160,12 +150,9 @@ describe('assertEvmBridgeStepIntent — deposit leg', () => {
 
   it('refuses when arg2 (amount) exceeds what was requested', () => {
     const txData = { to: ROUTER, data: depositCalldata({ amount: 2000001n }), value: '0' };
-    expect(() => assertEvmBridgeStepIntent(txData, intent)).toThrow(/more than the 2000000 base units/);
-    try {
-      assertEvmBridgeStepIntent(txData, intent);
-    } catch (e) {
-      expect(e.code).toBe('AMOUNT_MISMATCH');
-    }
+    const e = caught(() => assertEvmBridgeStepIntent(txData, intent));
+    expect(e.message).toMatch(/more than the 2000000 base units/);
+    expect(e.code).toBe('AMOUNT_MISMATCH');
   });
 
   it('accepts arg2 exactly at the requested amount', () => {
@@ -182,25 +169,19 @@ describe('assertEvmBridgeStepIntent — deposit leg', () => {
   it('refuses when deposit requested amount is a non-numeric string', () => {
     const txData = { to: ROUTER, data: depositCalldata(), value: '0' };
     const badAnchor = { ...intent, requestedAmountBaseUnits: 'not-a-number' };
-    expect(() => assertEvmBridgeStepIntent(txData, badAnchor)).toThrow(/not a valid integer/);
-    try {
-      assertEvmBridgeStepIntent(txData, badAnchor);
-    } catch (e) {
-      expect(e.code).toBe('AMOUNT_MISMATCH');
-      expect(e.message).toMatch(/Request a new quote/);
-    }
+    const e = caught(() => assertEvmBridgeStepIntent(txData, badAnchor));
+    expect(e.message).toMatch(/not a valid integer/);
+    expect(e.code).toBe('AMOUNT_MISMATCH');
+    expect(e.message).toMatch(/Request a new quote/);
   });
 });
 
 describe('assertEvmBridgeStepIntent — cross-cutting', () => {
   it('refuses a non-zero native value on an approve step', () => {
     const txData = { to: USDC, data: approveCalldata(ROUTER, 2000000n), value: '0x1' };
-    expect(() => assertEvmBridgeStepIntent(txData, intent)).toThrow(/non-zero native value/);
-    try {
-      assertEvmBridgeStepIntent(txData, intent);
-    } catch (e) {
-      expect(e.code).toBe('UNEXPECTED_ACTION');
-    }
+    const e = caught(() => assertEvmBridgeStepIntent(txData, intent));
+    expect(e.message).toMatch(/non-zero native value/);
+    expect(e.code).toBe('UNEXPECTED_ACTION');
   });
 
   it('refuses a non-zero native value on a deposit step', () => {
@@ -209,75 +190,54 @@ describe('assertEvmBridgeStepIntent — cross-cutting', () => {
   });
 
   it('refuses missing transaction data', () => {
-    expect(() => assertEvmBridgeStepIntent({ to: ROUTER }, intent)).toThrow(/no transaction data/);
-    try {
-      assertEvmBridgeStepIntent({ to: ROUTER }, intent);
-    } catch (e) {
-      expect(e.code).toBe('INVALID_INPUT');
-    }
+    const e = caught(() => assertEvmBridgeStepIntent({ to: ROUTER }, intent));
+    expect(e.message).toMatch(/no transaction data/);
+    expect(e.code).toBe('INVALID_INPUT');
   });
 
   it('refuses a deposit-selector call with malformed (wrong-length) calldata', () => {
     const txData = { to: ROUTER, data: '0xe8017952' + word(SIGNER), value: '0' };
-    expect(() => assertEvmBridgeStepIntent(txData, intent)).toThrow(/malformed deposit calldata/);
-    try {
-      assertEvmBridgeStepIntent(txData, intent);
-    } catch (e) {
-      expect(e.code).toBe('INVALID_INPUT');
-    }
+    const e = caught(() => assertEvmBridgeStepIntent(txData, intent));
+    expect(e.message).toMatch(/malformed deposit calldata/);
+    expect(e.code).toBe('INVALID_INPUT');
   });
 
   it('refuses a deposit whose id word contains non-hex characters', () => {
     const nonHexId = 'gg'.repeat(32); // 64 chars but not valid hex
     const data = '0xe8017952' + word(SIGNER) + word(USDC) + word((2000000n).toString(16)) + nonHexId;
     const txData = { to: ROUTER, data, value: '0' };
-    expect(() => assertEvmBridgeStepIntent(txData, intent)).toThrow(/malformed deposit calldata/);
-    try {
-      assertEvmBridgeStepIntent(txData, intent);
-    } catch (e) {
-      expect(e.code).toBe('INVALID_INPUT');
-    }
+    const e = caught(() => assertEvmBridgeStepIntent(txData, intent));
+    expect(e.message).toMatch(/malformed deposit calldata/);
+    expect(e.code).toBe('INVALID_INPUT');
   });
 
   it('refuses a deposit whose amount word is not valid hex, instead of throwing a raw SyntaxError', () => {
     const badAmount = '0xe8017952' + word(SIGNER) + word(USDC) + 'zz'.repeat(32) + word('a');
     const txData = { to: ROUTER, data: badAmount, value: '0' };
-    expect(() => assertEvmBridgeStepIntent(txData, intent)).toThrow(/malformed deposit calldata/);
-    try {
-      assertEvmBridgeStepIntent(txData, intent);
-    } catch (e) {
-      expect(e.code).toBe('INVALID_INPUT');
-    }
+    const e = caught(() => assertEvmBridgeStepIntent(txData, intent));
+    expect(e.message).toMatch(/malformed deposit calldata/);
+    expect(e.code).toBe('INVALID_INPUT');
   });
 
   it('refuses an approve whose amount word is not valid hex, instead of throwing a raw SyntaxError', () => {
     const txData = { to: USDC, data: '0x095ea7b3' + word(ROUTER) + 'zz'.repeat(32), value: '0' };
-    expect(() => assertEvmBridgeStepIntent(txData, intent)).toThrow(/malformed approve calldata/);
-    try {
-      assertEvmBridgeStepIntent(txData, intent);
-    } catch (e) {
-      expect(e.code).toBe('INVALID_INPUT');
-    }
+    const e = caught(() => assertEvmBridgeStepIntent(txData, intent));
+    expect(e.message).toMatch(/malformed approve calldata/);
+    expect(e.code).toBe('INVALID_INPUT');
   });
 
   it('refuses an unparseable native value, instead of throwing a raw SyntaxError', () => {
     const txData = { to: ROUTER, data: depositCalldata(), value: '0x' };
-    expect(() => assertEvmBridgeStepIntent(txData, intent)).toThrow(/malformed native value/);
-    try {
-      assertEvmBridgeStepIntent(txData, intent);
-    } catch (e) {
-      expect(e.code).toBe('INVALID_INPUT');
-    }
+    const e = caught(() => assertEvmBridgeStepIntent(txData, intent));
+    expect(e.message).toMatch(/malformed native value/);
+    expect(e.code).toBe('INVALID_INPUT');
   });
 
   it('refuses a step addressed `from` a wallet other than the signer', () => {
     const txData = { to: ROUTER, data: depositCalldata(), value: '0', from: ATTACKER };
-    expect(() => assertEvmBridgeStepIntent(txData, intent)).toThrow(/signing wallet is/);
-    try {
-      assertEvmBridgeStepIntent(txData, intent);
-    } catch (e) {
-      expect(e.code).toBe('SIGNER_MISMATCH');
-    }
+    const e = caught(() => assertEvmBridgeStepIntent(txData, intent));
+    expect(e.message).toMatch(/signing wallet is/);
+    expect(e.code).toBe('SIGNER_MISMATCH');
   });
 
   it('accepts a step whose `from` matches the signer', () => {
@@ -314,12 +274,9 @@ describe('preflightEvmBridgeSteps — plan-level bound', () => {
     // but two deposits of `requested` each would pull 2x what the user reviewed —
     // ERC-20 approve overwrites the allowance, so the second pair drains again.
     const plan = [approveStep(), depositStep(), approveStep(), depositStep()];
-    expect(() => preflightEvmBridgeSteps(plan, intent)).toThrow(/at most one approve and exactly one deposit/);
-    try {
-      preflightEvmBridgeSteps(plan, intent);
-    } catch (e) {
-      expect(e.code).toBe('UNEXPECTED_ACTION');
-    }
+    const e = caught(() => preflightEvmBridgeSteps(plan, intent));
+    expect(e.message).toMatch(/at most one approve and exactly one deposit/);
+    expect(e.code).toBe('UNEXPECTED_ACTION');
   });
 
   it('refuses a plan with two deposits sharing one approve', () => {
@@ -354,13 +311,9 @@ describe('preflightEvmBridgeSteps — plan-level bound', () => {
     // A compromised API/Relay response that drops the deposit step entirely
     // would otherwise pass preflight (0 > 1 is false) and get the approve
     // signed and broadcast with nothing ever pulling from it.
-    expect(() => preflightEvmBridgeSteps([approveStep()], intent))
-      .toThrow(/at most one approve and exactly one deposit/);
-    try {
-      preflightEvmBridgeSteps([approveStep()], intent);
-    } catch (e) {
-      expect(e.code).toBe('UNEXPECTED_ACTION');
-    }
+    const e = caught(() => preflightEvmBridgeSteps([approveStep()], intent));
+    expect(e.message).toMatch(/at most one approve and exactly one deposit/);
+    expect(e.code).toBe('UNEXPECTED_ACTION');
   });
 
   it('refuses a plan whose deposit step is addressed from a different wallet, before the approve step ever signs', () => {
@@ -374,12 +327,8 @@ describe('preflightEvmBridgeSteps — plan-level bound', () => {
       id: 'deposit',
       items: [{ status: 'incomplete', data: { to: ROUTER, data: depositCalldata(), value: '0', from: ATTACKER } }],
     };
-    expect(() => preflightEvmBridgeSteps([approveStep(), tamperedDeposit], intent))
-      .toThrow(/signing wallet is/);
-    try {
-      preflightEvmBridgeSteps([approveStep(), tamperedDeposit], intent);
-    } catch (e) {
-      expect(e.code).toBe('SIGNER_MISMATCH');
-    }
+    const e = caught(() => preflightEvmBridgeSteps([approveStep(), tamperedDeposit], intent));
+    expect(e.message).toMatch(/signing wallet is/);
+    expect(e.code).toBe('SIGNER_MISMATCH');
   });
 });
