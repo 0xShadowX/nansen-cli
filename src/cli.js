@@ -606,6 +606,31 @@ export async function batchProfile(api, params = {}) {
   return { results, total: addresses.length, completed: results.filter(r => !r.error).length };
 }
 
+function normalizeTraceDepth(raw) {
+  if (Array.isArray(raw)) {
+    throw new NansenError(
+      '--depth may only be specified once',
+      ErrorCode.INVALID_PARAMS,
+    );
+  }
+  if (typeof raw === 'string' && raw.trim() === '') {
+    throw new NansenError(
+      '--depth requires a safe integer value',
+      ErrorCode.INVALID_PARAMS,
+    );
+  }
+  const value = typeof raw === 'string' || typeof raw === 'number'
+    ? Number(raw)
+    : NaN;
+  if (!Number.isSafeInteger(value)) {
+    throw new NansenError(
+      `--depth must be a safe integer; received: ${String(raw)}`,
+      ErrorCode.INVALID_PARAMS,
+    );
+  }
+  return Math.max(1, Math.min(value, 5));
+}
+
 export async function traceCounterparties(api, params = {}) {
   let { address, chain = 'ethereum', depth = 2, width = 10, days = 30, delayMs = 1000 } = params;
   if (!address) {
@@ -626,7 +651,7 @@ export async function traceCounterparties(api, params = {}) {
   if (!validation.valid) {
     throw new NansenError(validation.error, ErrorCode.INVALID_ADDRESS);
   }
-  const clampedDepth = Math.max(1, Math.min(depth, 5));
+  const clampedDepth = normalizeTraceDepth(depth);
   const visited = new Set();
   const nodes = [];
   const edges = [];
@@ -1339,7 +1364,13 @@ export function buildCommands(deps = {}) {
           return batchProfile(apiInstance, { addresses, chain, include, delayMs });
         },
         'trace': () => {
-          const depth = options.depth ? Math.max(1, Math.min(parseInt(options.depth), 5)) : 2;
+          if (flags.depth) {
+            throw new NansenError(
+              '--depth requires a safe integer value',
+              ErrorCode.INVALID_PARAMS,
+            );
+          }
+          const depth = options.depth ?? 2;
           const width = options.width ? parseInt(options.width) : 10;
           const delayMs = options.delay ? parseInt(options.delay) : 1000;
           return traceCounterparties(apiInstance, { address, chain, depth, width, days, delayMs });
