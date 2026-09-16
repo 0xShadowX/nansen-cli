@@ -757,11 +757,13 @@ function decodeBridgeDeposit(data) {
     // than a raw SyntaxError.
     return null;
   }
+  const idWord = w(3);
+  if (!/^[0-9a-fA-F]{64}$/.test(idWord)) return null;
   return {
     depositor: '0x' + w(0).slice(24),   // last 20 bytes of word 0
     token: '0x' + w(1).slice(24),
     amount,
-    id: w(3),                            // opaque relay id word (bytes32), normalized on re-encode
+    id: idWord,                          // opaque relay id word (bytes32), normalized on re-encode
   };
 }
 
@@ -893,8 +895,11 @@ export function assertEvmBridgeStepIntent(txData, intent, context = 'Bridge EVM 
         'UNEXPECTED_ACTION',
       );
     }
-    // encodeApproveCalldata rejects >= MAX_UINT256 and amount > maxAllowance,
-    // and re-validates the 20-byte spender width. Cap to the requested input.
+    // Cap to the requested input. The only errors encodeApproveCalldata can
+    // throw here are amount-related (zero, unlimited, over-cap): the spender is
+    // already validated against BRIDGE_DEPOSIT_TARGETS above, and amount was
+    // already parsed as a BigInt by decodeErc20Approve — so AMOUNT_MISMATCH is
+    // the correct code for everything that can actually reach the catch.
     const maxAllowance = requireAmountAnchor(intent, context);
     try {
       const scoped = encodeApproveCalldata(spender, amount, { maxAllowance });

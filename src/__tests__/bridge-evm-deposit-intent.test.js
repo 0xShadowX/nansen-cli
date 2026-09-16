@@ -227,6 +227,18 @@ describe('assertEvmBridgeStepIntent — cross-cutting', () => {
     }
   });
 
+  it('refuses a deposit whose id word contains non-hex characters', () => {
+    const nonHexId = 'gg'.repeat(32); // 64 chars but not valid hex
+    const data = '0xe8017952' + word(SIGNER) + word(USDC) + word((2000000n).toString(16)) + nonHexId;
+    const txData = { to: ROUTER, data, value: '0' };
+    expect(() => assertEvmBridgeStepIntent(txData, intent)).toThrow(/malformed deposit calldata/);
+    try {
+      assertEvmBridgeStepIntent(txData, intent);
+    } catch (e) {
+      expect(e.code).toBe('INVALID_INPUT');
+    }
+  });
+
   it('refuses a deposit whose amount word is not valid hex, instead of throwing a raw SyntaxError', () => {
     const badAmount = '0xe8017952' + word(SIGNER) + word(USDC) + 'zz'.repeat(32) + word('a');
     const txData = { to: ROUTER, data: badAmount, value: '0' };
