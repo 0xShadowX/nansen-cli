@@ -119,7 +119,6 @@ describe('assertEvmBridgeStepIntent — deposit leg', () => {
   it('accepts a valid deposit and returns normalized calldata', () => {
     const txData = { to: ROUTER, data: depositCalldata(), value: '0' };
     const { data } = assertEvmBridgeStepIntent(txData, intent);
-    // Clean input normalizes to itself.
     expect(data).toBe(txData.data);
   });
 

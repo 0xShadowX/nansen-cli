@@ -813,8 +813,9 @@ function requireAmountAnchor(intent, context) {
 
 // Returns { data } — for an approve step, `data` is RE-ENCODED via
 // encodeApproveCalldata (rejects MAX_UINT256, caps to requestedAmountBaseUnits,
-// re-validates the spender width). For a deposit step, `data` is returned
-// unchanged after the to/selector allowlist AND the decoded-arg binding pass.
+// re-validates the spender width). For a deposit step, `data` is the canonical
+// re-encoding from encodeBridgeDeposit after the to/selector allowlist AND the
+// decoded-arg binding pass (normalizes dirty upper bits in address words).
 export function assertEvmBridgeStepIntent(txData, intent, context = 'Bridge EVM step') {
   if (!txData || typeof txData !== 'object' || typeof txData.data !== 'string') {
     throw new CommandError(`${context}: no transaction data to verify. Request a new quote.`, 'INVALID_INPUT');
