@@ -112,11 +112,17 @@ export function buildCheckScript(dir, file, url = process.env.NANSEN_REGISTRY_UR
     const dir = ${JSON.stringify(dir)};
     const file = ${JSON.stringify(file)};
     const req = http.get(url, { timeout: 5000 }, (res) => {
+      if (res.statusCode < 200 || res.statusCode >= 300) {
+        res.resume();
+        return;
+      }
+
       let body = '';
       res.on('data', c => body += c);
       res.on('end', () => {
         try {
           const { version } = JSON.parse(body);
+          if (typeof version !== 'string' || version.trim() === '') return;
           if (!fs.existsSync(dir)) fs.mkdirSync(dir, { mode: 0o700, recursive: true });
           const tmp = file + '.' + process.pid + '.tmp';
           try {
