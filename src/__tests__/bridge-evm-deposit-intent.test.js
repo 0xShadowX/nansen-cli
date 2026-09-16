@@ -53,9 +53,27 @@ describe('assertEvmBridgeStepIntent — approve leg', () => {
     expect(() => assertEvmBridgeStepIntent(txData, intent)).toThrow(/unlimited/);
   });
 
-  it('refuses an approve amount over the requested cap', () => {
+  it('refuses an approve amount over the requested cap with AMOUNT_MISMATCH code', () => {
     const txData = { to: USDC, data: approveCalldata(ROUTER, 2000001n), value: '0' };
     expect(() => assertEvmBridgeStepIntent(txData, intent)).toThrow(/exceeds the request's maximum input/);
+    try {
+      assertEvmBridgeStepIntent(txData, intent);
+    } catch (e) {
+      expect(e.code).toBe('AMOUNT_MISMATCH');
+      expect(e.message).toMatch(/Request a new quote/);
+    }
+  });
+
+  it('refuses when requestedAmountBaseUnits is a non-numeric string', () => {
+    const txData = { to: USDC, data: approveCalldata(ROUTER, 2000000n), value: '0' };
+    const badAnchor = { ...intent, requestedAmountBaseUnits: 'not-a-number' };
+    expect(() => assertEvmBridgeStepIntent(txData, badAnchor)).toThrow(/not a valid integer/);
+    try {
+      assertEvmBridgeStepIntent(txData, badAnchor);
+    } catch (e) {
+      expect(e.code).toBe('AMOUNT_MISMATCH');
+      expect(e.message).toMatch(/Request a new quote/);
+    }
   });
 
   it('re-encodes a valid approve at exactly the requested cap', () => {
@@ -93,10 +111,31 @@ describe('assertEvmBridgeStepIntent — deposit leg', () => {
     expect(() => assertEvmBridgeStepIntent(txData, intent)).toThrow(/unexpected method/);
   });
 
-  it('accepts a valid deposit unchanged', () => {
+  it('accepts a valid deposit and returns normalized calldata', () => {
     const txData = { to: ROUTER, data: depositCalldata(), value: '0' };
     const { data } = assertEvmBridgeStepIntent(txData, intent);
+    // Clean input normalizes to itself.
     expect(data).toBe(txData.data);
+  });
+
+  it('normalizes dirty upper bits in depositor/token words while preserving last-20-bytes', () => {
+    // Build calldata where the upper 12 bytes of the depositor and token words
+    // have non-zero garbage. decodeBridgeDeposit extracts the last 20 bytes only,
+    // and encodeBridgeDeposit re-encodes from those clean values — so the output
+    // must equal the canonical (zero-padded) encoding even though the input was dirty.
+    const dirtyDepositor = 'deadbeef'.repeat(3) + SIGNER.slice(2);   // 12 dirty + 20 clean bytes
+    const dirtyToken    = 'cafebabe'.repeat(3) + USDC.slice(2);
+    const data266 = '0xe8017952'
+      + dirtyDepositor.toLowerCase().padStart(64, '0')
+      + dirtyToken.toLowerCase().padStart(64, '0')
+      + (2000000n).toString(16).padStart(64, '0')
+      + 'a'.repeat(64);
+    const txData = { to: ROUTER, data: data266, value: '0' };
+    const { data } = assertEvmBridgeStepIntent(txData, intent);
+    // The output must be the clean, canonical encoding.
+    expect(data).toBe(depositCalldata());
+    // And must differ from the dirty input.
+    expect(data).not.toBe(txData.data);
   });
 
   it('refuses when arg0 (depositor) is redirected away from the signer', () => {
@@ -134,6 +173,18 @@ describe('assertEvmBridgeStepIntent — deposit leg', () => {
     const txData = { to: ROUTER, data: depositCalldata(), value: '0' };
     const noAnchor = { ...intent, requestedAmountBaseUnits: null };
     expect(() => assertEvmBridgeStepIntent(txData, noAnchor)).toThrow(/AMOUNT_MISMATCH|no reviewed amount/);
+  });
+
+  it('refuses when deposit requested amount is a non-numeric string', () => {
+    const txData = { to: ROUTER, data: depositCalldata(), value: '0' };
+    const badAnchor = { ...intent, requestedAmountBaseUnits: 'not-a-number' };
+    expect(() => assertEvmBridgeStepIntent(txData, badAnchor)).toThrow(/not a valid integer/);
+    try {
+      assertEvmBridgeStepIntent(txData, badAnchor);
+    } catch (e) {
+      expect(e.code).toBe('AMOUNT_MISMATCH');
+      expect(e.message).toMatch(/Request a new quote/);
+    }
   });
 });
 

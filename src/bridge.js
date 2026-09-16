@@ -711,7 +711,7 @@ const BRIDGE_DEPOSIT_TARGETS = {
 };
 
 // The deposit call selector on that router. Its calldata is a fixed 4-arg ABI
-// layout: deposit(address depositor, address token, uint256 amount, bytes32 id).
+// layout: depositErc20(address depositor, address token, uint256 amount, bytes32 id).
 const BRIDGE_DEPOSIT_SELECTOR = '0xe8017952';
 
 // True when calldata is an ERC-20 approve(spender, amount). 0x + 4-byte
@@ -761,8 +761,20 @@ function decodeBridgeDeposit(data) {
     depositor: '0x' + w(0).slice(24),   // last 20 bytes of word 0
     token: '0x' + w(1).slice(24),
     amount,
-    // w(3) is the opaque relay id — intentionally not returned / not bound.
+    id: w(3),                            // opaque relay id word (bytes32), normalized on re-encode
   };
+}
+
+// Re-encode accepted deposit calldata from decoded fields. Normalizes any dirty
+// upper bits in address words (the decoded last-20-bytes are clean; padding them
+// fresh means the output is canonical regardless of the input's upper bits).
+// The relay id word is opaque — kept verbatim from the decoded input.
+function encodeBridgeDeposit({ depositor, token, amount, id }) {
+  return BRIDGE_DEPOSIT_SELECTOR
+    + depositor.slice(2).toLowerCase().padStart(64, '0')
+    + token.slice(2).toLowerCase().padStart(64, '0')
+    + amount.toString(16).padStart(64, '0')
+    + id.toLowerCase();
 }
 
 // Bind a server-supplied EVM bridge transaction to the user's intent before
@@ -784,6 +796,14 @@ function requireAmountAnchor(intent, context) {
     throw new CommandError(
       `${context}: no reviewed amount recorded to check the transaction against `
         + `(this quote may predate a nansen-cli update). Refusing to sign. Request a new quote.`,
+      'AMOUNT_MISMATCH',
+    );
+  }
+  try {
+    return BigInt(intent.requestedAmountBaseUnits);
+  } catch {
+    throw new CommandError(
+      `${context}: reviewed amount ${intent.requestedAmountBaseUnits} is not a valid integer. Refusing to sign. Request a new quote.`,
       'AMOUNT_MISMATCH',
     );
   }
@@ -844,7 +864,6 @@ export function assertEvmBridgeStepIntent(txData, intent, context = 'Bridge EVM 
 
   // AC1: ERC-20 approve → re-scope through the hardened encoder.
   if (isErc20Approve(txData.data)) {
-    requireAmountAnchor(intent, context);
     // The approve call itself must target the origin chain's USDC contract —
     // otherwise a spender/amount that both look legitimate could still grant
     // the router an allowance over an unrelated token the wallet holds.
@@ -873,10 +892,16 @@ export function assertEvmBridgeStepIntent(txData, intent, context = 'Bridge EVM 
     }
     // encodeApproveCalldata rejects >= MAX_UINT256 and amount > maxAllowance,
     // and re-validates the 20-byte spender width. Cap to the requested input.
-    const scoped = encodeApproveCalldata(spender, amount, {
-      maxAllowance: BigInt(intent.requestedAmountBaseUnits),
-    });
-    return { data: scoped };
+    const maxAllowance = requireAmountAnchor(intent, context);
+    try {
+      const scoped = encodeApproveCalldata(spender, amount, { maxAllowance });
+      return { data: scoped };
+    } catch (err) {
+      throw new CommandError(
+        `${context}: ${err.message} Request a new quote.`,
+        'AMOUNT_MISMATCH',
+      );
+    }
   }
 
   // AC2: deposit call → to + selector must both be on the route's allowlist.
@@ -924,8 +949,8 @@ export function assertEvmBridgeStepIntent(txData, intent, context = 'Bridge EVM 
   }
   // arg2 (amount) must not exceed what the user requested (defense in depth —
   // the scoped approval already bounds the pull; captures show exact equality).
-  requireAmountAnchor(intent, context);
-  if (dep.amount > BigInt(intent.requestedAmountBaseUnits)) {
+  const requestedAmount = requireAmountAnchor(intent, context);
+  if (dep.amount > requestedAmount) {
     throw new CommandError(
       `${context} would deposit ${dep.amount}, more than the ${intent.requestedAmountBaseUnits} base units you requested. `
         + `Refusing to sign. Request a new quote.`,
@@ -936,7 +961,7 @@ export function assertEvmBridgeStepIntent(txData, intent, context = 'Bridge EVM 
   // appears on-chain — both are the accepted relayer-trust residual, bounded by
   // the checks above.
 
-  return { data: txData.data };
+  return { data: encodeBridgeDeposit(dep) };
 }
 
 // Validate every EVM step's calldata against intent BEFORE any step is signed
@@ -1557,6 +1582,17 @@ OPTIONS:
       const destinationToken = toTokenRaw
         ? resolveBridgeToken(toTokenRaw, destinationChain)
         : resolveBridgeToken('USDC', destinationChain);
+
+      if (
+        originChain === 'base'
+        && destinationChain === 'hyperliquid'
+        && !isBridgeUsdc(originToken, originChain)
+      ) {
+        throw new CommandError(
+          'Base -> Hyperliquid bridge deposits currently support USDC only. Use --from-token USDC.',
+          'INVALID_INPUT',
+        );
+      }
 
       const wallet = resolveWalletAddress(walletName);
 

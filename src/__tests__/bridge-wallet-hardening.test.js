@@ -167,6 +167,49 @@ describe('bridge execute wallet hardening', () => {
     expect(exportWallet).not.toHaveBeenCalled();
   });
 
+  it('rejects a duplicated EVM deposit plan before any eth_sendRawTransaction', async () => {
+    // A tampered plan with [deposit, deposit] passes per-item checks (each deposit
+    // is individually valid) but fails preflightEvmBridgeSteps (exactly one deposit
+    // required). This test ensures preflightEvmBridgeSteps is wired into execute:
+    // if it were removed, processEvmStep would reach eth_sendRawTransaction.
+    const requestedAmount = 2000000n;
+    const depositData = depositCalldata(ADDR, BASE_USDC, requestedAmount);
+    const cmds = buildBridgeCommands({ log: () => {} });
+    showWallet.mockReturnValue({ name: 'w', evm: ADDR, provider: 'local' });
+    exportWallet.mockReturnValue({ evm: { privateKey: '11'.repeat(32) } });
+
+    const fakeFetch = mockChainRpc();
+    globalThis.fetch = fakeFetch;
+
+    writeQuote('bridge-preflight', {
+      requestedAmountBaseUnits: requestedAmount.toString(),
+      response: {
+        execution_type: 'evm_transaction',
+        steps: [
+          { id: 'deposit-1', items: [{ status: 'incomplete', data: { to: DEPOSIT_ROUTER, data: depositData, value: '0' } }] },
+          { id: 'deposit-2', items: [{ status: 'incomplete', data: { to: DEPOSIT_ROUTER, data: depositData, value: '0' } }] },
+        ],
+        request_id: 'r-preflight',
+      },
+    });
+
+    let err;
+    try {
+      await cmds.execute([], cleanApi, {}, { quote: 'bridge-preflight', wallet: 'w' });
+    } catch (e) {
+      err = e;
+    }
+
+    expect(err).toBeDefined();
+    expect(err.message).toMatch(/at most one approve and exactly one deposit/);
+
+    // No broadcast must have happened.
+    const calls = fakeFetch.mock.calls;
+    const rpcBodies = calls.map(([, init]) => JSON.parse(init.body));
+    const broadcasts = rpcBodies.filter(b => b.method === 'eth_sendRawTransaction');
+    expect(broadcasts).toHaveLength(0);
+  });
+
   it('screens a distinct bridge recipient with the signer', async () => {
     const recipient = '0x' + 'cd'.repeat(20);
     const cmds = buildBridgeCommands({ log: () => {} });
