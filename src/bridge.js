@@ -770,7 +770,8 @@ function decodeBridgeDeposit(data) {
 // Re-encode accepted deposit calldata from decoded fields. Normalizes any dirty
 // upper bits in address words (the decoded last-20-bytes are clean; padding them
 // fresh means the output is canonical regardless of the input's upper bits).
-// The relay id word is opaque — kept verbatim from the decoded input.
+// The relay id word is opaque — lowercased to canonical form; its value is
+// preserved (a bytes32 is binary, so case carries no meaning on-chain).
 // id is always exactly 64 hex chars: decodeBridgeDeposit returns null unless
 // data.length === 266, and w(3) slices a fixed 64-char window of that string.
 function encodeBridgeDeposit({ depositor, token, amount, id }) {
