@@ -769,13 +769,9 @@ function decodeBridgeDeposit(data) {
 // upper bits in address words (the decoded last-20-bytes are clean; padding them
 // fresh means the output is canonical regardless of the input's upper bits).
 // The relay id word is opaque — kept verbatim from the decoded input.
+// id is always exactly 64 hex chars: decodeBridgeDeposit returns null unless
+// data.length === 266, and w(3) slices a fixed 64-char window of that string.
 function encodeBridgeDeposit({ depositor, token, amount, id }) {
-  if (id.length !== 64) {
-    throw new CommandError(
-      `Bridge deposit id word is ${id.length} chars, expected 64. Refusing to sign. Request a new quote.`,
-      'INVALID_INPUT',
-    );
-  }
   return BRIDGE_DEPOSIT_SELECTOR
     + depositor.slice(2).toLowerCase().padStart(64, '0')
     + token.slice(2).toLowerCase().padStart(64, '0')
