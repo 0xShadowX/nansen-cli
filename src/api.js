@@ -1250,9 +1250,10 @@ export class NansenAPI {
   /**
    * Batch counterparties for up to 10 distinct wallets in one request.
    * Results are not aggregated: every row carries the `wallet_address` it belongs to.
+   * Defaults to chain 'all' (the ecosystem is auto-detected), matching the CLI.
    */
   async addressCounterpartiesBatch(params = {}) {
-    const { addresses, chain = 'ethereum', filters = {}, orderBy, pagination, days = 30, sourceInput } = params;
+    const { addresses, chain = 'all', filters = {}, orderBy, pagination, days = 30, sourceInput } = params;
     const list = Array.isArray(addresses) ? addresses : (addresses ? [addresses] : []);
     // Dedupe on the normalised form, because the server lowercases EVM addresses
     // before deduping: a checksum-cased repeat must not count twice against the

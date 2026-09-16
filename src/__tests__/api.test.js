@@ -9,7 +9,13 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, it, expect, beforeAll, vi } from 'vitest';
-import { NansenAPI, ErrorCode, clearCache } from '../api.js';
+import {
+  NansenAPI,
+  ErrorCode,
+  clearCache,
+  COUNTERPARTIES_BATCH_MAX_ADDRESSES,
+  COUNTERPARTIES_BATCH_MAX_DAYS
+} from '../api.js';
 
 const LIVE_TEST = process.env.NANSEN_LIVE_TEST === '1';
 const API_KEY = process.env.NANSEN_API_KEY || 'test-key';
@@ -1167,6 +1173,19 @@ describe('NansenAPI', () => {
         expect(result.data[0]).toHaveProperty('wallet_address', WALLET_A);
       });
 
+      it('should default to chain "all" when the caller omits it', async () => {
+        setupMock(MOCK_RESPONSES.addressCounterpartiesBatch);
+
+        await api.addressCounterpartiesBatch({ addresses: [WALLET_A] });
+
+        const body = expectFetchCalledWith('/api/v1/profiler/address/counterparties/batch');
+        // Must match the CLI dispatch default, or a library caller silently
+        // gets a different chain than the documented one
+        expect(body.chain).toBe('all');
+        // 'all' still normalises EVM casing for the dedupe key
+        expect(body.wallet_addresses).toEqual([WALLET_A]);
+      });
+
       it('should send source_input, filters and order_by only when provided', async () => {
         setupMock(MOCK_RESPONSES.addressCounterpartiesBatch);
 
@@ -1196,17 +1215,17 @@ describe('NansenAPI', () => {
         expect(body.wallet_addresses).toEqual([WALLET_A, WALLET_B]);
       });
 
-      it('should not count a checksum-cased repeat against the 10-address limit', async () => {
+      it('should not count a checksum-cased repeat against the address limit', async () => {
         setupMock(MOCK_RESPONSES.addressCounterpartiesBatch);
-        const ten = evmAddresses(10);
+        const atLimit = evmAddresses(COUNTERPARTIES_BATCH_MAX_ADDRESSES);
 
         await api.addressCounterpartiesBatch({
-          addresses: [...ten, checksumCased(ten[0])],
+          addresses: [...atLimit, checksumCased(atLimit[0])],
           chain: 'ethereum'
         });
 
         const body = expectFetchCalledWith('/api/v1/profiler/address/counterparties/batch');
-        expect(body.wallet_addresses).toHaveLength(10);
+        expect(body.wallet_addresses).toHaveLength(COUNTERPARTIES_BATCH_MAX_ADDRESSES);
       });
 
       it('should send Solana-only batches under the default chain', async () => {
@@ -1246,10 +1265,15 @@ describe('NansenAPI', () => {
         expectNoFetch();
       });
 
-      it('should reject more than 10 distinct addresses', async () => {
+      it('should reject more than the maximum distinct addresses', async () => {
         await expect(
-          api.addressCounterpartiesBatch({ addresses: evmAddresses(11), chain: 'ethereum' })
-        ).rejects.toThrow(/at most 10 distinct addresses/);
+          api.addressCounterpartiesBatch({
+            addresses: evmAddresses(COUNTERPARTIES_BATCH_MAX_ADDRESSES + 1),
+            chain: 'ethereum'
+          })
+        ).rejects.toThrow(
+          new RegExp(`at most ${COUNTERPARTIES_BATCH_MAX_ADDRESSES} distinct addresses`)
+        );
         expectNoFetch();
       });
 
@@ -1260,23 +1284,31 @@ describe('NansenAPI', () => {
         expectNoFetch();
       });
 
-      it('should reject a lookback window longer than 90 days', async () => {
+      it('should reject a lookback window longer than the maximum', async () => {
         await expect(
-          api.addressCounterpartiesBatch({ addresses: [WALLET_A], chain: 'ethereum', days: 120 })
-        ).rejects.toThrow(/capped at 90 days/);
+          api.addressCounterpartiesBatch({
+            addresses: [WALLET_A],
+            chain: 'ethereum',
+            days: COUNTERPARTIES_BATCH_MAX_DAYS + 30
+          })
+        ).rejects.toThrow(new RegExp(`capped at ${COUNTERPARTIES_BATCH_MAX_DAYS} days`));
         expectNoFetch();
       });
 
-      it('should accept a 90 day window', async () => {
+      it('should accept a window at the maximum', async () => {
         setupMock(MOCK_RESPONSES.addressCounterpartiesBatch);
 
-        await api.addressCounterpartiesBatch({ addresses: [WALLET_A], chain: 'ethereum', days: 90 });
+        await api.addressCounterpartiesBatch({
+          addresses: [WALLET_A],
+          chain: 'ethereum',
+          days: COUNTERPARTIES_BATCH_MAX_DAYS
+        });
 
         const body = expectFetchCalledWith('/api/v1/profiler/address/counterparties/batch');
         const diffDays = Math.round(
           (new Date(body.date.to) - new Date(body.date.from)) / (1000 * 60 * 60 * 24)
         );
-        expect(diffDays).toBe(90);
+        expect(diffDays).toBe(COUNTERPARTIES_BATCH_MAX_DAYS);
       });
 
       it('should reject a non-positive or non-numeric days value', async () => {
