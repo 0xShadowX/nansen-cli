@@ -51,6 +51,11 @@ describe('assertEvmBridgeStepIntent — approve leg', () => {
   it('refuses approve(ROUTER, MAX_UINT256) — proves the MAX guard, not just the spender guard', () => {
     const txData = { to: USDC, data: approveCalldata(ROUTER, MAX_UINT256), value: '0' };
     expect(() => assertEvmBridgeStepIntent(txData, intent)).toThrow(/unlimited/);
+    try {
+      assertEvmBridgeStepIntent(txData, intent);
+    } catch (e) {
+      expect(e.code).toBe('AMOUNT_MISMATCH'); // intentional: unlimited approval is an amount mismatch
+    }
   });
 
   it('refuses an approve amount over the requested cap with AMOUNT_MISMATCH code', () => {
