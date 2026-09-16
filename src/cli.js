@@ -948,8 +948,14 @@ export function buildCommands(deps = {}) {
         'search': async () => {
           // Accept queries as positional args or --query (repeated)
           let queries = subArgs.length > 0 ? subArgs : [];
-          if (options.query) {
+          if (options.query !== undefined) {
             const fromOption = Array.isArray(options.query) ? options.query : [options.query];
+            if (!fromOption.every(q => typeof q === 'string')) {
+              throw new NansenError(
+                '--query values must be strings',
+                ErrorCode.INVALID_PARAMS,
+              );
+            }
             queries = queries.concat(fromOption);
           }
           queries = queries.filter(q => q.trim());
@@ -985,6 +991,12 @@ export function buildCommands(deps = {}) {
             try { new URL(u); } catch {
               throw new NansenError(`Invalid URL: "${u}". URLs must include a scheme, e.g. https://example.com`, ErrorCode.INVALID_PARAMS);
             }
+          }
+          if (Array.isArray(options.question)) {
+            throw new NansenError('--question may only be specified once', ErrorCode.INVALID_PARAMS);
+          }
+          if (options.question !== undefined && typeof options.question !== 'string') {
+            throw new NansenError('--question must be a string', ErrorCode.INVALID_PARAMS);
           }
           if (!options.question || !options.question.trim()) {
             throw new NansenError('--question is required and cannot be blank. Usage: nansen web fetch https://example.com --question "What is this about?"', ErrorCode.MISSING_PARAM);
