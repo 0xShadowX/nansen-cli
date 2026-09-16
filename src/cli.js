@@ -468,23 +468,51 @@ export function formatStream(data) {
  *          or already-parsed object {from, to}.
  * Falls back to days-based range if no date provided.
  */
-export function parseDateOption(dateOption, days = 30) {
-  if (dateOption) {
-    if (typeof dateOption === 'object' && dateOption.from) {
-      return dateOption;
-    }
-    if (typeof dateOption === 'string') {
-      // Simple date string: use as both from and to
-      const dateMatch = dateOption.match(/^\d{4}-\d{2}-\d{2}$/);
-      if (dateMatch) {
-        return { from: dateOption, to: dateOption };
-      }
+function isValidDateOnly(value) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+
+export function parseDateOption(dateOption, days = 30, valuelessDateFlag = false) {
+  if (valuelessDateFlag) {
+    throw new NansenError(
+      '--date requires a value in YYYY-MM-DD format or a JSON date range',
+      ErrorCode.INVALID_PARAMS,
+    );
+  }
+
+  if (dateOption === undefined) {
+    // Default: use days-based range only when --date was not supplied.
+    const to = new Date().toISOString().split('T')[0];
+    const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    return { from, to };
+  }
+
+  let parsedOption = dateOption;
+  if (typeof parsedOption === 'string' && !isValidDateOnly(parsedOption)) {
+    try {
+      parsedOption = JSON.parse(parsedOption);
+    } catch {
+      // Keep the original value so the actionable validation error below is used.
     }
   }
-  // Default: use days-based range
-  const to = new Date().toISOString().split('T')[0];
-  const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-  return { from, to };
+
+  if (typeof parsedOption === 'string' && isValidDateOnly(parsedOption)) {
+    return { from: parsedOption, to: parsedOption };
+  }
+
+  if (parsedOption && typeof parsedOption === 'object' && !Array.isArray(parsedOption)) {
+    const { from, to } = parsedOption;
+    if (isValidDateOnly(from) && (to === undefined || isValidDateOnly(to))) {
+      return parsedOption;
+    }
+  }
+
+  throw new NansenError(
+    '--date must be YYYY-MM-DD or a JSON object with a valid "from" date and optional "to" date',
+    ErrorCode.INVALID_PARAMS,
+  );
 }
 
 // Enrich transfers with Nansen labels for from/to addresses
@@ -1292,11 +1320,11 @@ export function buildCommands(deps = {}) {
         'balance': () => apiInstance.addressBalance({ address, entityName, chain, filters, orderBy }),
         'labels': () => apiInstance.addressLabels({ address, chain, pagination }),
         'transactions': () => {
-          const date = parseDateOption(options.date, days);
+          const date = parseDateOption(options.date, days, flags.date);
           return apiInstance.addressTransactions({ address, chain, filters, orderBy, pagination, days, date });
         },
         'pnl': () => {
-          const date = parseDateOption(options.date, days);
+          const date = parseDateOption(options.date, days, flags.date);
           return apiInstance.addressPnl({ address, chain, date, days, filters, orderBy, pagination });
         },
         'search': () => apiInstance.entitySearch({ query: options.query }),
@@ -1308,7 +1336,7 @@ export function buildCommands(deps = {}) {
         'perp-positions': () => apiInstance.addressPerpPositions({ address, filters, orderBy, pagination }),
         'perp-trades': () => apiInstance.addressPerpTrades({ address, filters, orderBy, pagination, days }),
         'dex-trades': () => {
-          const date = parseDateOption(options.date, days);
+          const date = parseDateOption(options.date, days, flags.date);
           return apiInstance.addressDexTrades({ address, chain, filters, orderBy, pagination, days, date });
         },
         'batch': () => {
@@ -1421,7 +1449,7 @@ export function buildCommands(deps = {}) {
         },
         'holders': () => apiInstance.tokenHolders({ tokenAddress, chain, labelType: onlySmartMoney ? 'smart_money' : 'all_holders', filters, orderBy, pagination, withLabels: resolveBooleanOption(options, flags, 'premium-labels') }),
         'flows': () => {
-          const date = parseDateOption(options.date, days);
+          const date = parseDateOption(options.date, days, flags.date);
           const label = options.label;
           return apiInstance.tokenFlows({ tokenAddress, chain, label, filters, orderBy, pagination, days, date });
         },
@@ -1431,7 +1459,7 @@ export function buildCommands(deps = {}) {
           return apiInstance.tokenPnlLeaderboard({ tokenAddress, chain, filters, orderBy, pagination, days, withLabels });
         },
         'who-bought-sold': () => {
-          const date = parseDateOption(options.date, days);
+          const date = parseDateOption(options.date, days, flags.date);
           const buyOrSell = (options['buy-or-sell'] || 'BUY').toUpperCase();
           return apiInstance.tokenWhoBoughtSold({ tokenAddress, chain, buyOrSell, filters, orderBy, pagination, days, date });
         },
