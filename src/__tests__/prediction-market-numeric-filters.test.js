@@ -28,7 +28,7 @@ describe('prediction-market numeric filter validation', () => {
     }));
   });
 
-  it.each(['abc', 'NaN', 'Infinity', '-Infinity'])(
+  it.each(['abc', 'NaN', 'Infinity'])(
     'rejects non-finite --min-liquidity value %s before the API call',
     async (value) => {
       const { api, promise } = invoke(['market-screener', '--min-liquidity', value]);
@@ -39,6 +39,13 @@ describe('prediction-market numeric filter validation', () => {
       expect(api.pmMarketScreener).not.toHaveBeenCalled();
     },
   );
+
+  it('rejects -Infinity before the API call when parsed as a valueless option', async () => {
+    const { api, promise } = invoke(['market-screener', '--min-liquidity', '-Infinity']);
+
+    await expect(promise).rejects.toThrow('--min-liquidity requires a finite number');
+    expect(api.pmMarketScreener).not.toHaveBeenCalled();
+  });
 
   it('rejects repeated and valueless numeric filters', async () => {
     const repeated = invoke([
