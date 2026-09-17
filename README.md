@@ -56,7 +56,7 @@ nansen schema [command] [--pretty]    # full command reference (no API key neede
 
 **Research categories:** `smart-money` (`sm`), `token` (`tgm`), `profiler` (`prof`), `portfolio` (`port`), `prediction-market` (`pm`), `search`, `perp`
 
-The points leaderboard API has been removed. `nansen research points leaderboard` and its deprecated alias `nansen points leaderboard` return `success: false` with code `COMMAND_UNAVAILABLE` and exit status `1`, without making an API request.
+The points leaderboard API has been removed. `nansen research points leaderboard` and the legacy command `nansen points leaderboard` return `success: false` with code `COMMAND_UNAVAILABLE` and exit status `1`, without making an API request.
 
 **Trade:** `quote`, `execute`, `bridge-status`, `limit-order` — DEX swaps on Solana and Base, cross-chain bridges, and Solana limit orders.
 
