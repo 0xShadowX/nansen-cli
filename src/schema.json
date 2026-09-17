@@ -586,7 +586,7 @@
                 "chain": {
                   "type": "string",
                   "default": "all",
-                  "description": "Chain to profile every address on. One ecosystem per request: EVM and Solana addresses cannot be mixed. The default 'all' auto-detects the ecosystem"
+                  "description": "Chain to profile every address on: all, arbitrum, arc, avalanche, base, bitcoin, bnb, ethereum, hyperevm, injective, iotaevm, linea, mantle, mantra, monad, near, optimism, plasma, polygon, robinhood, sei, solana, sonic, starknet, sui, ton, tron ('bsc' is accepted and sent as 'bnb'). One ecosystem per request: EVM and Solana addresses cannot be mixed. The default 'all' auto-detects the ecosystem across EVM chains, or Solana for a Solana-only batch"
                 },
                 "days": {
                   "type": "number",
