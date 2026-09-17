@@ -299,8 +299,8 @@ function parseNonNegativeSafeIntegerOption(name, options, flags, defaultValue) {
 function parseDaysOption(options, flags) {
   const days = parseNonNegativeSafeIntegerOption('days', options, flags, 30);
   // Safe integers can still exceed JavaScript Date's representable range.
-  // Reject those values before they reach date-based analytics requests.
-  const fromMs = Date.now() - days * 24 * 60 * 60 * 1000;
+  // Anchor the overflow check to the Unix epoch so the boundary is deterministic.
+  const fromMs = 0 - days * 24 * 60 * 60 * 1000;
   if (Number.isNaN(new Date(fromMs).getTime())) {
     throw new NansenError(
       `--days is outside the supported date range; received: ${days}`,
