@@ -2196,6 +2196,221 @@ describe('buildCommands', () => {
     });
   });
 
+  describe('--days validation', () => {
+    it.each(['-1', '1.5', 'NaN', 'Infinity', '9007199254740992', '7abc'])(
+      'should reject invalid --days value %s instead of truncating or forwarding it',
+      async (days) => {
+        const mockApi = {
+          smartMoneyHistoricalHoldings: vi.fn().mockResolvedValue({ data: [] }),
+        };
+        const commands = buildCommands({});
+
+        await expect(commands['smart-money'](['historical-holdings'], mockApi, {}, { days }))
+          .rejects.toMatchObject({
+            code: ErrorCode.INVALID_PARAMS,
+            message: `--days must be a non-negative safe integer; received: ${days}`,
+          });
+
+        expect(mockApi.smartMoneyHistoricalHoldings).not.toHaveBeenCalled();
+      },
+    );
+
+    it('should reject a safe integer that cannot form a valid date range', async () => {
+      const mockApi = {
+        smartMoneyHistoricalHoldings: vi.fn().mockResolvedValue({ data: [] }),
+      };
+      const commands = buildCommands({});
+
+      await expect(commands['smart-money'](
+        ['historical-holdings'],
+        mockApi,
+        {},
+        { days: '9007199254740991' },
+      )).rejects.toMatchObject({
+        code: ErrorCode.INVALID_PARAMS,
+        message: '--days is outside the supported date range; received: 9007199254740991',
+      });
+
+      expect(mockApi.smartMoneyHistoricalHoldings).not.toHaveBeenCalled();
+    });
+
+    it('should reject bare and repeated --days values clearly', async () => {
+      const mockApi = {
+        smartMoneyHistoricalHoldings: vi.fn().mockResolvedValue({ data: [] }),
+      };
+      const commands = buildCommands({});
+
+      await expect(commands['smart-money'](
+        ['historical-holdings'],
+        mockApi,
+        { days: true },
+        {},
+      )).rejects.toThrow('--days requires a non-negative safe integer value');
+
+      await expect(commands['smart-money'](
+        ['historical-holdings'],
+        mockApi,
+        {},
+        { days: ['7', '30'] },
+      )).rejects.toThrow('--days may only be specified once');
+
+      expect(mockApi.smartMoneyHistoricalHoldings).not.toHaveBeenCalled();
+    });
+
+    it('should preserve valid zero and integer --days values', async () => {
+      const mockApi = {
+        smartMoneyHistoricalHoldings: vi.fn().mockResolvedValue({ data: [] }),
+      };
+      const commands = buildCommands({});
+
+      await commands['smart-money'](['historical-holdings'], mockApi, {}, { days: '0' });
+      expect(mockApi.smartMoneyHistoricalHoldings).toHaveBeenLastCalledWith(
+        expect.objectContaining({ days: 0 }),
+      );
+
+      await commands['smart-money'](['historical-holdings'], mockApi, {}, { days: '365' });
+      expect(mockApi.smartMoneyHistoricalHoldings).toHaveBeenLastCalledWith(
+        expect.objectContaining({ days: 365 }),
+      );
+    });
+
+    it('should apply strict --days parsing across analytics namespaces', async () => {
+      const address = '0x0000000000000000000000000000000000000001';
+      const mockApi = {
+        smartMoneyHistoricalHoldings: vi.fn().mockResolvedValue({ data: [] }),
+        addressHistoricalBalances: vi.fn().mockResolvedValue({ data: [] }),
+        tokenFlows: vi.fn().mockResolvedValue({ data: [] }),
+        perpLeaderboard: vi.fn().mockResolvedValue({ data: [] }),
+      };
+      const commands = buildCommands({});
+
+      const calls = [
+        () => commands['smart-money'](['historical-holdings'], mockApi, {}, { days: '7abc' }),
+        () => commands['profiler'](['historical-balances'], mockApi, {}, {
+          address, chain: 'ethereum', days: '7abc',
+        }),
+        () => commands['token'](['flows'], mockApi, {}, {
+          token: address, chain: 'ethereum', days: '7abc',
+        }),
+        () => commands['perp'](['leaderboard'], mockApi, {}, { days: '7abc' }),
+      ];
+
+      for (const call of calls) {
+        await expect(call()).rejects.toMatchObject({
+          code: ErrorCode.INVALID_PARAMS,
+          message: '--days must be a non-negative safe integer; received: 7abc',
+        });
+      }
+
+      expect(mockApi.smartMoneyHistoricalHoldings).not.toHaveBeenCalled();
+      expect(mockApi.addressHistoricalBalances).not.toHaveBeenCalled();
+      expect(mockApi.tokenFlows).not.toHaveBeenCalled();
+      expect(mockApi.perpLeaderboard).not.toHaveBeenCalled();
+    });
+
+    it('should dispatch profiler counterparties-batch with parsed --days and list it in help', async () => {
+      const addressA = '0x0000000000000000000000000000000000000001';
+      const addressB = '0x0000000000000000000000000000000000000002';
+      const mockApi = {
+        addressCounterpartiesBatch: vi.fn().mockResolvedValue({ data: [] }),
+      };
+      const commands = buildCommands({});
+
+      await commands['profiler'](['counterparties-batch'], mockApi, {}, {
+        addresses: `${addressA},${addressB}`,
+        chain: 'ethereum',
+        days: '7',
+      });
+
+      expect(mockApi.addressCounterpartiesBatch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          addresses: [addressA, addressB],
+          chain: 'ethereum',
+          days: 7,
+        }),
+      );
+
+      const help = await commands['profiler'](['help'], mockApi, {}, {});
+      expect(help.commands).toContain('counterparties-batch');
+    });
+
+    it('should read profiler counterparties-batch addresses from --file', async () => {
+      const addressA = '0x0000000000000000000000000000000000000001';
+      const addressB = '0x0000000000000000000000000000000000000002';
+      const file = `.counterparties-batch-${process.pid}.txt`;
+      const mockApi = {
+        addressCounterpartiesBatch: vi.fn().mockResolvedValue({ data: [] }),
+      };
+      const commands = buildCommands({});
+
+      fs.writeFileSync(file, `${addressA}\n${addressB}\n`, 'utf8');
+      try {
+        await commands['profiler'](['counterparties-batch'], mockApi, {}, {
+          file,
+          chain: 'ethereum',
+          days: '7',
+        });
+      } finally {
+        fs.unlinkSync(file);
+      }
+
+      expect(mockApi.addressCounterpartiesBatch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          addresses: [addressA, addressB],
+          chain: 'ethereum',
+          days: 7,
+        }),
+      );
+    });
+
+    it('should reject malformed --days for profiler counterparties-batch', async () => {
+      const mockApi = {
+        addressCounterpartiesBatch: vi.fn().mockResolvedValue({ data: [] }),
+      };
+      const commands = buildCommands({});
+
+      await expect(commands['profiler'](['counterparties-batch'], mockApi, {}, {
+        addresses: '0x0000000000000000000000000000000000000001',
+        chain: 'ethereum',
+        days: '7abc',
+      })).rejects.toMatchObject({
+        code: ErrorCode.INVALID_PARAMS,
+        message: '--days must be a non-negative safe integer; received: 7abc',
+      });
+
+      expect(mockApi.addressCounterpartiesBatch).not.toHaveBeenCalled();
+    });
+
+    it('should leave --days ignored on subcommands that do not support it', async () => {
+      const mockApi = {
+        smartMoneyNetflow: vi.fn().mockResolvedValue({ data: [] }),
+      };
+      const commands = buildCommands({});
+
+      await commands['smart-money'](['netflow'], mockApi, {}, { days: 'not-used' });
+
+      expect(mockApi.smartMoneyNetflow).toHaveBeenCalledOnce();
+    });
+
+    it('should describe supported --days options as bounded integers in the schema', () => {
+      const examples = [
+        SCHEMA.commands.research.subcommands['smart-money'].subcommands['historical-holdings'].options.days,
+        SCHEMA.commands.research.subcommands.profiler.subcommands.transactions.options.days,
+        SCHEMA.commands.research.subcommands.profiler.subcommands['counterparties-batch'].options.days,
+        SCHEMA.commands.research.subcommands.token.subcommands.flows.options.days,
+        SCHEMA.commands.research.subcommands.perp.subcommands.leaderboard.options.days,
+      ];
+
+      for (const option of examples) {
+        expect(option).toMatchObject({
+          type: 'integer',
+          minimum: 0,
+          default: 30,
+        });
+      }
+    });
+  });
+
   describe('profiler command', () => {
     it('should return help for unknown subcommand', async () => {
       const result = await commands['profiler'](['unknown'], {}, {}, {});

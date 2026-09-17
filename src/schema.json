@@ -481,7 +481,8 @@
                   "description": "Chain to query"
                 },
                 "days": {
-                  "type": "number",
+                  "type": "integer",
+                  "minimum": 0,
                   "default": 30,
                   "description": "Lookback window in days"
                 }
@@ -507,7 +508,8 @@
                   "description": "Chain to profile the address on"
                 },
                 "days": {
-                  "type": "number",
+                  "type": "integer",
+                  "minimum": 0,
                   "default": 30,
                   "description": "Lookback window in days"
                 }
@@ -528,7 +530,8 @@
                   "description": "Chain to profile the address on"
                 },
                 "days": {
-                  "type": "number",
+                  "type": "integer",
+                  "minimum": 0,
                   "default": 30,
                   "description": "Lookback window in days"
                 }
@@ -565,7 +568,8 @@
                   "description": "Chain to profile the address on"
                 },
                 "days": {
-                  "type": "number",
+                  "type": "integer",
+                  "minimum": 0,
                   "default": 30,
                   "description": "Lookback window in days"
                 }
@@ -589,7 +593,8 @@
                   "description": "Chain to profile every address on: all, arbitrum, arc, avalanche, base, bitcoin, bnb, ethereum, hyperevm, injective, iotaevm, linea, mantle, mantra, monad, near, optimism, plasma, polygon, robinhood, sei, solana, sonic, starknet, sui, ton, tron ('bsc' is accepted and sent as 'bnb'). One ecosystem per request: EVM and Solana addresses cannot be mixed. The default 'all' auto-detects the ecosystem across EVM chains, or Solana for a Solana-only batch"
                 },
                 "days": {
-                  "type": "number",
+                  "type": "integer",
+                  "minimum": 0,
                   "default": 30,
                   "description": "Lookback window in days (max 90 for this command)"
                 }
@@ -610,7 +615,8 @@
                   "description": "Chain to profile the address on"
                 },
                 "days": {
-                  "type": "number",
+                  "type": "integer",
+                  "minimum": 0,
                   "default": 30,
                   "description": "Lookback window in days"
                 }
@@ -658,7 +664,8 @@
                   "description": "Chain to profile the address on"
                 },
                 "days": {
-                  "type": "number",
+                  "type": "integer",
+                  "minimum": 0,
                   "default": 30,
                   "description": "Lookback window in days"
                 }
@@ -701,7 +708,8 @@
                   "description": "Hyperliquid trader address"
                 },
                 "days": {
-                  "type": "number",
+                  "type": "integer",
+                  "minimum": 0,
                   "default": 30,
                   "description": "Lookback window in days"
                 }
@@ -722,7 +730,8 @@
                   "description": "Chain to profile the address on"
                 },
                 "days": {
-                  "type": "number",
+                  "type": "integer",
+                  "minimum": 0,
                   "default": 30,
                   "description": "Lookback window in days"
                 }
@@ -783,7 +792,8 @@
                   "description": "Counterparties to follow at each hop"
                 },
                 "days": {
-                  "type": "number",
+                  "type": "integer",
+                  "minimum": 0,
                   "default": 30,
                   "description": "Lookback window in days at each hop"
                 },
@@ -808,7 +818,8 @@
                   "description": "Chain to compare the wallets on"
                 },
                 "days": {
-                  "type": "number",
+                  "type": "integer",
+                  "minimum": 0,
                   "default": 30,
                   "description": "Lookback window in days"
                 }
@@ -834,7 +845,8 @@
                   "description": "Token contract address (mint address on Solana)"
                 },
                 "days": {
-                  "type": "number",
+                  "type": "integer",
+                  "minimum": 0,
                   "default": 30,
                   "description": "Lookback window in days"
                 },
@@ -866,7 +878,8 @@
                   "description": "Token contract address (mint address on Solana)"
                 },
                 "days": {
-                  "type": "number",
+                  "type": "integer",
+                  "minimum": 0,
                   "default": 30,
                   "description": "Lookback window in days"
                 },
@@ -895,7 +908,8 @@
                   "description": "Token contract address (mint address on Solana)"
                 },
                 "days": {
-                  "type": "number",
+                  "type": "integer",
+                  "minimum": 0,
                   "default": 30,
                   "description": "Lookback window in days"
                 }
@@ -916,7 +930,8 @@
                   "description": "Token contract address (mint address on Solana)"
                 },
                 "days": {
-                  "type": "number",
+                  "type": "integer",
+                  "minimum": 0,
                   "default": 30,
                   "description": "Lookback window in days"
                 }
@@ -957,7 +972,8 @@
                   "description": "Token contract address (mint address on Solana)"
                 },
                 "days": {
-                  "type": "number",
+                  "type": "integer",
+                  "minimum": 0,
                   "default": 30,
                   "description": "Lookback window in days"
                 },
@@ -977,7 +993,8 @@
                   "description": "Perp symbol, e.g. BTC"
                 },
                 "days": {
-                  "type": "number",
+                  "type": "integer",
+                  "minimum": 0,
                   "default": 30,
                   "description": "Lookback window in days"
                 },
@@ -1008,7 +1025,8 @@
                   "description": "Perp symbol, e.g. BTC"
                 },
                 "days": {
-                  "type": "number",
+                  "type": "integer",
+                  "minimum": 0,
                   "default": 30,
                   "description": "Lookback window in days"
                 }
@@ -1175,7 +1193,8 @@
               "description": "Screen perpetual futures contracts",
               "options": {
                 "days": {
-                  "type": "number",
+                  "type": "integer",
+                  "minimum": 0,
                   "default": 30,
                   "description": "Lookback window in days"
                 },
@@ -1205,7 +1224,8 @@
               "description": "Perpetual futures PnL leaderboard",
               "options": {
                 "days": {
-                  "type": "number",
+                  "type": "integer",
+                  "minimum": 0,
                   "default": 30,
                   "description": "Lookback window in days"
                 },
