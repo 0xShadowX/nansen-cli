@@ -941,6 +941,8 @@ describe('buildLimitOrderCommands', () => {
 
       await cmds.list([], null, {}, { wallet: 'lo-list-test' });
       expect(logs.some(l => l.includes('No limit orders found'))).toBe(true);
+      const params = new URL(global.fetch.mock.calls[2][0]).searchParams;
+      expect(Object.fromEntries(params)).toMatchObject({ limit: '20', offset: '0', dir: 'desc' });
     });
 
     it('formats and displays orders', async () => {

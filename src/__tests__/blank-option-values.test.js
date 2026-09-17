@@ -8,10 +8,17 @@ import { buildLimitOrderCommands } from '../limit-order.js';
 import { buildWalletCommands, createWallet, showWallet } from '../wallet.js';
 import { buildResearchCommands } from '../commands/research.js';
 import { sendTokens } from '../transfer.js';
+import { createPrivyWalletPair } from '../privy.js';
 
 vi.mock('../transfer.js', async importOriginal => ({
   ...await importOriginal(),
   sendTokens: vi.fn().mockResolvedValue({ from: 'sender' }),
+}));
+
+vi.mock('../privy.js', () => ({
+  createPrivyWalletPair: vi.fn().mockResolvedValue({
+    name: 'default', evm: { address: 'evm-address' }, solana: { address: 'solana-address' },
+  }),
 }));
 
 const deps = { log: vi.fn(), exit: vi.fn() };
@@ -40,6 +47,7 @@ const researchCases = [
   ['token', 'screener', 'timeframe'],
   ['token', 'ohlcv', 'timeframe'],
   ['token', 'flow-intelligence', 'timeframe'],
+  ['token', 'who-bought-sold', 'buy-or-sell'],
 ];
 
 describe.each(['', ' \t '])('explicit blank option %j', blank => {
@@ -59,6 +67,40 @@ describe.each(['', ' \t '])('explicit blank option %j', blank => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
+  it.each(['create', 'list', 'cancel', 'update'])('rejects limit-order %s --wallet before authentication', async handler => {
+    const parsed = parseArgs(['--wallet', blank]);
+    await expect(buildLimitOrderCommands(deps)[handler]([], null, parsed.flags, {
+      from: 'SOL', to: 'USDC', amount: '1', order: 'order-1',
+      'trigger-mint': 'SOL', 'trigger-condition': 'below', 'trigger-price': '80',
+      ...parsed.options,
+    })).rejects.toMatchObject({ code: 'MISSING_PARAM', message: expect.stringContaining('--wallet requires a value') });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('rejects execute --wallet before loading or signing a quote', async () => {
+    const parsed = parseArgs(['quote-1', '--wallet', blank]);
+    await expect(buildTradingCommands(deps).execute(parsed._, null, parsed.flags, parsed.options))
+      .rejects.toMatchObject({ code: 'MISSING_PARAM', message: expect.stringContaining('--wallet requires a value') });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it.each(['limit', 'offset', 'dir'])('rejects limit-order list --%s', async name => {
+    const parsed = parseArgs(['--' + name, blank]);
+    await expect(buildLimitOrderCommands(deps).list([], null, parsed.flags, parsed.options))
+      .rejects.toMatchObject({ code: 'MISSING_PARAM', message: expect.stringContaining(`--${name} requires a value`) });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it.each(['local', 'privy'])('rejects %s wallet create --name even with a positional name', async provider => {
+    const parsed = parseArgs(['create', 'positional-name', '--name', blank]);
+    await expect(buildWalletCommands(deps).wallet(parsed._, null, { 'unsafe-no-password': true }, {
+      ...parsed.options, provider,
+    })).rejects.toMatchObject({ code: 'MISSING_PARAM', message: expect.stringContaining('--name requires a value') });
+    expect(createPrivyWalletPair).not.toHaveBeenCalled();
+    expect(fs.existsSync(path.join(tempDir, '.nansen', 'wallets'))).toBe(false);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it.each(['token', 'wallet'])('rejects wallet send --%s', async name => {
     await expect(buildWalletCommands(deps).wallet(['send'], null, {}, {
       ...sendOptions, [name]: blank,
@@ -67,7 +109,7 @@ describe.each(['', ' \t '])('explicit blank option %j', blank => {
   });
 
   it.each(researchCases)('rejects research %s %s --%s', async (category, sub, name) => {
-    const api = { generalSearch: vi.fn(), tokenScreener: vi.fn(), tokenOhlcv: vi.fn(), tokenFlowIntelligence: vi.fn(), smartMoneyNetflow: vi.fn(), profilerBalance: vi.fn() };
+    const api = { generalSearch: vi.fn(), tokenScreener: vi.fn(), tokenOhlcv: vi.fn(), tokenFlowIntelligence: vi.fn(), tokenWhoBoughtSold: vi.fn(), smartMoneyNetflow: vi.fn(), profilerBalance: vi.fn() };
     await expect(buildCommands(deps).research([category, sub], api, {}, {
       token: 'So11111111111111111111111111111111111111112', [name]: blank,
     })).rejects.toMatchObject({ code: 'MISSING_PARAM', message: expect.stringContaining(`--${name} requires a value`) });
@@ -127,4 +169,22 @@ it('keeps research defaults when chain and timeframe options are omitted', async
   expect(api.chainRank).toHaveBeenCalledWith({ chainType: 'all', timeFrame: 7 });
   await buildResearchCommands(deps).research(['address-premium-labels'], api, {}, { address: '0xabc' });
   expect(api.addressPremiumLabels).toHaveBeenCalledWith(expect.objectContaining({ chain: 'all' }));
+});
+
+it.each(['local', 'privy'])('keeps the default name for %s wallet creation when omitted', async provider => {
+  await buildWalletCommands(deps).wallet(['create'], null, { 'unsafe-no-password': true }, { provider });
+  if (provider === 'privy') {
+    expect(createPrivyWalletPair).toHaveBeenCalledWith('default');
+  } else {
+    expect(showWallet('default').name).toBe('default');
+  }
+});
+
+it.each([[undefined, 'BUY'], ['SELL', 'SELL']])('preserves who-bought-sold side %j', async (side, expected) => {
+  const api = { tokenWhoBoughtSold: vi.fn() };
+  const options = side === undefined ? {} : { 'buy-or-sell': side };
+  await buildCommands(deps).research(['token', 'who-bought-sold'], api, {}, {
+    token: 'So11111111111111111111111111111111111111112', ...options,
+  });
+  expect(api.tokenWhoBoughtSold).toHaveBeenCalledWith(expect.objectContaining({ buyOrSell: expected }));
 });

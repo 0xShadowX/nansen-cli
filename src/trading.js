@@ -2500,6 +2500,7 @@ CROSS-CHAIN NOTES (when using --to-chain):
     },
 
     'execute': async (args, apiInstance, flags, options) => {
+      rejectBlankOption(options.wallet, 'wallet', '<name>');
       const quoteId = options.quote || options['quote-id'] || args[0];
       const walletName = options.wallet;
       const noSimulate = flags['no-simulate'];

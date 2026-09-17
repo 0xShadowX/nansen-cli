@@ -589,6 +589,7 @@ export function buildWalletCommands(deps = {}) {
   return {
     'wallet': async (args, apiInstance, flags, options) => {
       const subcommand = args[0] || 'help';
+      if (subcommand === 'create') rejectBlankOption(options.name, 'name', '<name>');
 
       // Privy-specific: only 'create' and policy commands need --provider privy
       if (options.provider === 'privy' || process.env.NANSEN_WALLET_PROVIDER === 'privy') {

@@ -1467,6 +1467,7 @@ export function buildCommands(deps = {}) {
       rejectBlankOption(options.chain, 'chain', 'solana');
       rejectBlankOption(options.chains, 'chains', 'solana');
       rejectBlankOption(options.timeframe, 'timeframe', '1d');
+      rejectBlankOption(options['buy-or-sell'], 'buy-or-sell', 'SELL');
       const subcommand = args[0] || 'help';
       const chain = options.chain || 'solana';
       const tokenAddress = normalizeAddress(options.token || options['token-address'], chain);

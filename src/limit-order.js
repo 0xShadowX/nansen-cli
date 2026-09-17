@@ -625,6 +625,7 @@ export function buildLimitOrderCommands(deps = {}) {
 
   return {
     'create': async (args, apiInstance, flags, options) => {
+      rejectBlankOption(options.wallet, 'wallet', '<name>');
       rejectBlankOption(options.expires, 'expires', '7d');
       const fromRaw = options.from || options['from-token'] || args[0];
       const toRaw = options.to || options['to-token'] || args[1];
@@ -887,6 +888,10 @@ EXAMPLES:
     },
 
     'list': async (args, apiInstance, flags, options) => {
+      rejectBlankOption(options.limit, 'limit', '20');
+      rejectBlankOption(options.offset, 'offset', '0');
+      rejectBlankOption(options.dir, 'dir', 'desc');
+      rejectBlankOption(options.wallet, 'wallet', '<name>');
       const walletName = options.wallet;
       const state = options.state;
       const mint = options.mint ? resolveTokenAddress(options.mint, 'solana') : undefined;
@@ -946,6 +951,7 @@ EXAMPLES:
     },
 
     'cancel': async (args, apiInstance, flags, options) => {
+      rejectBlankOption(options.wallet, 'wallet', '<name>');
       const orderId = options.order || options['order-id'] || args[0];
       const walletName = options.wallet;
 
@@ -1076,6 +1082,7 @@ EXAMPLES:
     },
 
     'update': async (args, apiInstance, flags, options) => {
+      rejectBlankOption(options.wallet, 'wallet', '<name>');
       const orderId = options.order || options['order-id'] || args[0];
       const triggerPrice = options['trigger-price'];
       const slippageBps = options['slippage-bps'];
