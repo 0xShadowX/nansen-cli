@@ -1994,6 +1994,7 @@
           }
         },
         "delete": {
+          "endpoint": "/api/v1/smart-alert/{alertId}",
           "description": "Delete an alert. Usage: nansen alerts delete <id>",
           "options": {}
         }
