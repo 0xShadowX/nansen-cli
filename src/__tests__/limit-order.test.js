@@ -630,6 +630,8 @@ describe('buildLimitOrderCommands', () => {
       expect(logs.some(l => l.includes('Limit order created'))).toBe(true);
       const createBody = JSON.parse(global.fetch.mock.calls[4][1].body);
       expect(createBody.slippageBps).toBe(100);
+      expect(createBody.expiresAt).toBeGreaterThan(Date.now() + 29 * 86400000);
+      expect(createBody.expiresAt).toBeLessThanOrEqual(Date.now() + 30 * 86400000);
     });
 
     it('rejects EVM token address for --from', async () => {

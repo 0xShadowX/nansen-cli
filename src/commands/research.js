@@ -5,7 +5,7 @@
  */
 
 import { NansenError, ErrorCode } from '../api.js';
-import { parseSort } from '../query-options.js';
+import { parseSort, rejectBlankOption } from '../query-options.js';
 
 // Research subcommands validate --page strictly. The shared helper in
 // src/query-options.js clamps an invalid page to 1 for the category commands,
@@ -68,7 +68,7 @@ function resolveDateRange(options) {
 }
 
 function parseTimeframeDays(value) {
-  if (value === undefined || value === null || value === '') return undefined;
+  if (value === undefined || value === null) return undefined;
   const trimmed = String(value).trim();
   if (!/^[1-9]\d*$/.test(trimmed)) {
     throw new NansenError('--timeframe-days must be a positive integer', ErrorCode.INVALID_PARAMS);
@@ -244,6 +244,13 @@ export function buildResearchCommands(deps = {}) {
       }
 
       if (sub === 'token-sectors') return apiInstance.tokenSectors();
+
+      for (const [name, example] of [
+        ['chain', 'solana'], ['chains', 'solana'], ['chain-type', 'all'],
+        ['timeframe', '1d'], ['timeframe-days', '7'],
+      ]) {
+        rejectBlankOption(options[name], name, example);
+      }
 
       const orderBy = parseSort(options.sort, options['order-by']);
       const pagination = buildPagination(options);

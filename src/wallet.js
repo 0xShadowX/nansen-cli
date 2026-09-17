@@ -3,6 +3,7 @@
  * Local key generation and storage for EVM and Solana chains.
  */
 
+import { rejectBlankOption } from './query-options.js';
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
@@ -837,6 +838,8 @@ export function buildWalletCommands(deps = {}) {
         },
 
         'send': async () => {
+          rejectBlankOption(options.token, 'token', '<token-address>');
+          rejectBlankOption(options.wallet, 'wallet', '<name>');
           const { sendTokens } = await import('./transfer.js');
 
           if (!options.to) {

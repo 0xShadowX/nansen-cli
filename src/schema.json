@@ -410,7 +410,7 @@
       }
     },
     "research": {
-      "description": "Research and analytics commands",
+      "description": "Research and analytics commands. Explicitly blank chain and timeframe options are rejected instead of selecting defaults.",
       "subcommands": {
         "portfolio": {
           "subcommands": {
@@ -2004,7 +2004,7 @@
       "description": "DEX trading commands",
       "subcommands": {
         "quote": {
-          "description": "Get a DEX swap quote (same-chain or cross-chain)",
+          "description": "Get a DEX swap quote (same-chain or cross-chain). Explicitly blank --swap-mode, --wallet, --to-chain, --aggregator, and --amount-unit values are rejected.",
           "options": {
             "chain": {
               "type": "string",
@@ -2140,7 +2140,7 @@
           "description": "Limit order management (Solana only)",
           "subcommands": {
             "create": {
-              "description": "Place a new limit order",
+              "description": "Place a new limit order. Explicitly blank --expires values are rejected; omission keeps the 30d default.",
               "options": {
                 "from": {
                   "type": "string",
@@ -2302,7 +2302,7 @@
           }
         },
         "send": {
-          "description": "Send tokens or native currency",
+          "description": "Send tokens or native currency. Explicitly blank --token and --wallet values are rejected; omit them for native currency and the default wallet.",
           "options": {
             "to": {
               "type": "string",

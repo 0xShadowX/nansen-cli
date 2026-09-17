@@ -14,7 +14,7 @@ import { buildAgentCommands } from './commands/agent.js';
 import { buildMcpCommands } from './commands/mcp.js';
 import { buildCompletionCommands } from './commands/completion.js';
 import { buildResearchCommands, RESEARCH_HISTORICAL_SUBCOMMANDS, RESEARCH_SUBCOMMANDS } from './commands/research.js';
-import { buildPagination, parseSort, parseCsvOption } from './query-options.js';
+import { buildPagination, parseSort, parseCsvOption, rejectBlankOption } from './query-options.js';
 export { buildPagination, parseSort };
 import { resolveAddress, isEnsName } from './ens.js';
 import { compareSemver } from './semver.js';
@@ -1321,6 +1321,8 @@ export function buildCommands(deps = {}) {
     },
 
     'smart-money': async (args, apiInstance, flags, options) => {
+      rejectBlankOption(options.chain, 'chain', 'solana');
+      rejectBlankOption(options.chains, 'chains', 'solana');
       const subcommand = args[0] || 'help';
       const chain = options.chain || 'solana';
       const chains = options.chains || [chain];
@@ -1359,6 +1361,7 @@ export function buildCommands(deps = {}) {
     },
 
     'profiler': async (args, apiInstance, flags, options) => {
+      rejectBlankOption(options.chain, 'chain', 'ethereum');
       const subcommand = args[0] || 'help';
       let address = options.address;
       const entityName = options.entity || options['entity-name'];
@@ -1461,6 +1464,9 @@ export function buildCommands(deps = {}) {
     },
 
     'token': async (args, apiInstance, flags, options) => {
+      rejectBlankOption(options.chain, 'chain', 'solana');
+      rejectBlankOption(options.chains, 'chains', 'solana');
+      rejectBlankOption(options.timeframe, 'timeframe', '1d');
       const subcommand = args[0] || 'help';
       const chain = options.chain || 'solana';
       const tokenAddress = normalizeAddress(options.token || options['token-address'], chain);
@@ -1645,6 +1651,7 @@ export function buildCommands(deps = {}) {
     },
 
     'search': async (args, apiInstance, flags, options) => {
+      rejectBlankOption(options.chain, 'chain', 'solana');
       return apiInstance.generalSearch({
         query: args[0] || options.query,
         resultType: options.type,
