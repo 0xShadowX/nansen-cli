@@ -601,6 +601,22 @@ describe('mcp verify', () => {
     expect(fetchFn).not.toHaveBeenCalled();
   });
 
+  it('rejects a blank --url instead of silently verifying the default endpoint', async () => {
+    const output = [];
+    const fetchFn = vi.fn();
+    const result = await runCLI(['mcp', 'verify', '--api-key', API_KEY, '--url', ''], {
+      output: value => output.push(value),
+      exit: vi.fn(),
+      fetchFn,
+      env,
+      isTTY: true,
+    });
+
+    expect(result.type).toBe('error');
+    expect(output.join('\n')).toMatch(/--url requires a value/);
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+
   it('rejects a valueless --api-key instead of falling back to a saved key', async () => {
     const output = [];
     const exits = [];

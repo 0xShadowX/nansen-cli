@@ -89,6 +89,49 @@ describe('parseArgs', () => {
     expect(result.flags.debug).toBe(true);
   });
 
+  it('should consume an explicit empty-string value instead of leaking it into positionals', () => {
+    const result = parseArgs(['--foo', '']);
+    expect(result.options.foo).toBe('');
+    expect(result.flags.foo).toBeUndefined();
+    expect(result._).toEqual([]);
+  });
+
+  it('should keep positionals intact when an option is given an empty-string value', () => {
+    const result = parseArgs(['web', 'fetch', 'https://nansen.ai', '--question', '']);
+    expect(result._).toEqual(['web', 'fetch', 'https://nansen.ai']);
+    expect(result.options.question).toBe('');
+    expect(result.flags.question).toBeUndefined();
+  });
+
+  it('should accumulate repeated empty-string option values', () => {
+    const result = parseArgs(['--token', '', '--token', '0xabc:base']);
+    expect(result.options.token).toEqual(['', '0xabc:base']);
+    expect(result._).toEqual([]);
+  });
+
+  it('should still treat a valueless flag followed by an empty string as boolean', () => {
+    const result = parseArgs(['--pretty', '']);
+    expect(result.flags.pretty).toBe(true);
+    expect(result.options.pretty).toBeUndefined();
+    expect(result._).toEqual(['']);
+  });
+
+  it('should keep boolean switches read only via flags out of options', () => {
+    // Handlers such as perp.js `flags.all` and trading.js `flags.gasless` never
+    // look at options, so a switch missing from VALUELESS_FLAGS would go dead
+    // the moment it is followed by any token.
+    for (const flag of ['all', 'max', 'gasless', 'auto-slippage', 'unsafe-no-password']) {
+      const empty = parseArgs([`--${flag}`, '']);
+      expect(empty.flags[flag]).toBe(true);
+      expect(empty.options[flag]).toBeUndefined();
+
+      const positional = parseArgs([`--${flag}`, 'BTC']);
+      expect(positional.flags[flag]).toBe(true);
+      expect(positional.options[flag]).toBeUndefined();
+      expect(positional._).toEqual(['BTC']);
+    }
+  });
+
   it('should not swallow a following positional arg as the value of a trade execute boolean flag', () => {
     for (const flag of ['no-simulate', 'no-verify-outcome', 'no-revoke-excessive-allowance']) {
       const result = parseArgs(['trade', 'execute', `--${flag}`, '1708900000000-abc123']);
