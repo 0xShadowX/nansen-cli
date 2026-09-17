@@ -60,10 +60,12 @@ function writeWithdrawQuote(quoteId, destinationChain) {
     destinationChain,
     walletProvider: 'local',
     walletAddress: WALLET,
+    requestedAmountBaseUnits: '500000000',
     timestamp: Date.now(),
     response: {
       execution_type: 'hyperliquid_signature',
       request_id: 'req-withdraw-1',
+      details: { currencyIn: { amount: '500000000', amountFormatted: '5.0' } },
       steps: [
         {
           id: 'authorize',
@@ -73,14 +75,20 @@ function writeWithdrawQuote(quoteId, destinationChain) {
               data: {
                 sign: {
                   domain: {
-                    name: 'Relay',
-                    version: '1',
+                    name: 'RelayNonceMapping',
+                    version: '2',
                     chainId: 1,
                     verifyingContract: '0x0000000000000000000000000000000000000000',
                   },
-                  types: { Authorize: [{ name: 'nonce', type: 'uint256' }] },
-                  primaryType: 'Authorize',
-                  value: { nonce: '1' },
+                  types: { NonceMapping: [
+                    { name: 'chainId', type: 'string' },
+                    { name: 'wallet', type: 'address' },
+                    { name: 'depositor', type: 'address' },
+                    { name: 'id', type: 'bytes32' },
+                    { name: 'nonce', type: 'uint256' },
+                  ] },
+                  primaryType: 'NonceMapping',
+                  value: { chainId: 'hyperliquid', wallet: WALLET, depositor: WALLET, id: '0x1', nonce: 1 },
                 },
                 post: { endpoint: '/authorize', body: {} },
               },
@@ -93,12 +101,30 @@ function writeWithdrawQuote(quoteId, destinationChain) {
           items: [
             {
               data: {
-                action: { type: 'sendAsset', parameters: { destination: WALLET, amount: '5' } },
+                action: {
+                  type: 'sendAsset',
+                  parameters: {
+                    hyperliquidChain: 'Mainnet',
+                    destination: WALLET,
+                    sourceDex: '',
+                    destinationDex: '',
+                    token: 'USDC:0x6d1e7cde53ba9467b783cb7c530ce054',
+                    amount: '5',
+                    fromSubAccount: '',
+                    nonce: 1700000000000,
+                  },
+                },
                 eip712PrimaryType: 'HyperliquidTransaction:SendAsset',
                 eip712Types: {
                   'HyperliquidTransaction:SendAsset': [
+                    { name: 'hyperliquidChain', type: 'string' },
                     { name: 'destination', type: 'string' },
+                    { name: 'sourceDex', type: 'string' },
+                    { name: 'destinationDex', type: 'string' },
+                    { name: 'token', type: 'string' },
                     { name: 'amount', type: 'string' },
+                    { name: 'fromSubAccount', type: 'string' },
+                    { name: 'nonce', type: 'uint64' },
                   ],
                 },
                 nonce: 1700000000000,
@@ -166,6 +192,13 @@ describe('hyperliquid withdrawals never sign an EVM transaction', () => {
   // the spy were never wired to the module at all.
   it('does reach EVM signing on a deposit, proving the spy is wired', async () => {
     const quoteId = 'bridge-deposit-control';
+    // Real Base -> Hyperliquid deposit router/selector, wrapped in a well-formed
+    // deposit() call bound to WALLET, so the intent-binding preflight passes and
+    // signEvmTransaction is actually reached (which is the thing under test here).
+    const ROUTER = '0x4cd00e387622c35bddb9b4c962c136462338bc31';
+    const USDC = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
+    const word = h => h.toLowerCase().replace(/^0x/, '').padStart(64, '0');
+    const depositCalldata = '0xe8017952' + word(WALLET) + word(USDC) + word((5000000n).toString(16)) + word('0x'.padEnd(66, 'a'));
     fs.writeFileSync(
       path.join(quotesDir, `${quoteId}.json`),
       JSON.stringify({
@@ -175,6 +208,7 @@ describe('hyperliquid withdrawals never sign an EVM transaction', () => {
         destinationChain: 'hyperliquid',
         walletProvider: 'local',
         walletAddress: WALLET,
+        requestedAmountBaseUnits: '5000000',
         timestamp: Date.now(),
         response: {
           execution_type: 'evm_transaction',
@@ -183,7 +217,7 @@ describe('hyperliquid withdrawals never sign an EVM transaction', () => {
             {
               id: 'deposit',
               kind: 'transaction',
-              items: [{ data: { from: WALLET, to: WALLET, data: '0x', value: '0', gas: '21000' } }],
+              items: [{ data: { from: WALLET, to: ROUTER, data: depositCalldata, value: '0', gas: '21000' } }],
             },
           ],
         },

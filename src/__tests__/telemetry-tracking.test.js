@@ -71,7 +71,6 @@ describe('telemetry tracking for all first-level commands', () => {
     { category: 'token',       sub: 'screener' },
     { category: 'search',      sub: 'search', extraOpts: ['--query', 'bitcoin'] },
     { category: 'portfolio',   sub: 'current', extraOpts: ['--address', '0x1234'] },
-    { category: 'points',      sub: 'leaderboard' },
     { category: 'prediction-market', sub: 'market-screener' },
   ];
 
@@ -90,6 +89,42 @@ describe('telemetry tracking for all first-level commands', () => {
       expect(wasTracked()).toBe(1);
       expect(trackSucceeded).toHaveBeenCalledOnce();
     });
+  }
+
+  for (const command of [['points', 'leaderboard'], ['research', 'points', 'leaderboard']]) {
+    for (const flags of [[], ['--fields', 'data'], ['--stream']]) {
+      it(`${[...command, ...flags].join(' ')} reports unavailability as a failure without calling the API`, async () => {
+        const output = vi.fn();
+        const exit = vi.fn();
+        const request = vi.fn();
+        const pointsLeaderboard = vi.fn();
+        function UnavailableAPI() {
+          return { request, pointsLeaderboard };
+        }
+
+        const result = await runCLI([...command, ...flags], baseDeps({
+          NansenAPIClass: UnavailableAPI,
+          output,
+          exit,
+        }));
+
+        expect(result.type).toBe('error');
+        expect(output).toHaveBeenCalledOnce();
+        expect(JSON.parse(output.mock.calls[0][0])).toMatchObject({
+          success: false,
+          error: 'The points leaderboard endpoint has been removed. Run "nansen research" to explore other analytics commands.',
+          code: 'COMMAND_UNAVAILABLE',
+        });
+        expect(exit).toHaveBeenCalledExactlyOnceWith(1);
+        expect(request).not.toHaveBeenCalled();
+        expect(pointsLeaderboard).not.toHaveBeenCalled();
+        expect(trackSucceeded).not.toHaveBeenCalled();
+        expect(trackFailed).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+          command: command.slice(0, 2).join(' '),
+          error_code: 'COMMAND_UNAVAILABLE',
+        }));
+      });
+    }
   }
 
   // ── Operational commands ──
@@ -200,6 +235,11 @@ describe('telemetry tracking for all first-level commands', () => {
     }
   }));
 
+  it('mcp usage does not trigger telemetry or a probe', async () => {
+    await runCLI(['mcp'], baseDeps({ log: () => {} }));
+    expect(wasTracked()).toBe(0);
+  });
+
   it('wallet (help subcommand)', async () => {
     await runCLI(['wallet'], baseDeps());
     expect(wasTracked()).toBe(1);
@@ -259,6 +299,55 @@ describe('telemetry tracking for all first-level commands', () => {
     expect(trackFailed.mock.calls[0][0].status).toBe(401);
   });
 
+  // ── from_cache reporting ──
+  //
+  // A cache hit is marked on the payload's `_meta` by getCachedResponse();
+  // there is no top-level `fromCache` field, and `--fields` filtering strips
+  // `_meta`, so the flag has to be read off `_meta` before that filtering.
+
+  /** API stub whose every method resolves to `payload`. */
+  function apiReturning(payload) {
+    return function StubAPI() {
+      return new Proxy({}, {
+        get: (_target, prop) => {
+          if (typeof prop === 'string' && prop !== 'then') {
+            return vi.fn().mockResolvedValue(payload);
+          }
+        },
+      });
+    };
+  }
+
+  const cachedPayload = { data: [{ symbol: 'ETH' }], _meta: { fromCache: true, cacheAge: 12 } };
+
+  it('reports from_cache: true for a cache hit', async () => {
+    const deps = baseDeps({ NansenAPIClass: apiReturning(cachedPayload) });
+    await runCLI(['research', 'smart-money', 'netflow'], deps);
+    expect(trackSucceeded).toHaveBeenCalledOnce();
+    expect(trackSucceeded.mock.calls[0][0].from_cache).toBe(true);
+  });
+
+  it('reports from_cache: true for a cache hit with --fields', async () => {
+    const deps = baseDeps({ NansenAPIClass: apiReturning(cachedPayload) });
+    await runCLI(['research', 'smart-money', 'netflow', '--fields', 'symbol'], deps);
+    expect(trackSucceeded).toHaveBeenCalledOnce();
+    expect(trackSucceeded.mock.calls[0][0].from_cache).toBe(true);
+  });
+
+  it('reports from_cache: true for a cache hit with --stream', async () => {
+    const deps = baseDeps({ NansenAPIClass: apiReturning(cachedPayload) });
+    await runCLI(['research', 'smart-money', 'netflow', '--stream'], deps);
+    expect(trackSucceeded).toHaveBeenCalledOnce();
+    expect(trackSucceeded.mock.calls[0][0].from_cache).toBe(true);
+  });
+
+  it('reports from_cache: false for a live response', async () => {
+    const deps = baseDeps({ NansenAPIClass: apiReturning({ data: [{ symbol: 'ETH' }] }) });
+    await runCLI(['research', 'smart-money', 'netflow'], deps);
+    expect(trackSucceeded).toHaveBeenCalledOnce();
+    expect(trackSucceeded.mock.calls[0][0].from_cache).toBe(false);
+  });
+
   // ── Meta commands should NOT trigger telemetry ──
 
   it('--help does not trigger telemetry', async () => {
@@ -289,7 +378,7 @@ describe('telemetry tracking for all first-level commands', () => {
       // operational ('auth' and 'doctor --offline' are tested as deliberately
       // untracked — the offline contract covers telemetry)
       'account', 'auth', 'doctor', 'login', 'logout', 'schema', 'cache', 'changelog',
-      'web',
+      'web', 'mcp',
       // wallet, trading, bridge & perp
       'wallet', 'trade', 'quote', 'execute', 'bridge-status', 'bridge', 'perp',
       // help is a meta command, intentionally not tracked

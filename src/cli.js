@@ -11,8 +11,13 @@ import { buildTradingCommands } from './trading.js';
 import { buildLimitOrderCommands } from './limit-order.js';
 import { formatAlertsTable, buildAlertsCommands } from './commands/alerts.js';
 import { buildAgentCommands } from './commands/agent.js';
-import { buildResearchCommands, RESEARCH_HISTORICAL_SUBCOMMANDS } from './commands/research.js';
+import { buildMcpCommands } from './commands/mcp.js';
+import { buildCompletionCommands } from './commands/completion.js';
+import { buildResearchCommands, RESEARCH_HISTORICAL_SUBCOMMANDS, RESEARCH_SUBCOMMANDS } from './commands/research.js';
+import { buildPagination, parseSort, parseCsvOption } from './query-options.js';
+export { buildPagination, parseSort };
 import { resolveAddress, isEnsName } from './ens.js';
+import { compareSemver } from './semver.js';
 import fs from 'fs';
 import { getUpdateNotification, getUpgradeNotice, scheduleUpdateCheck } from './update-check.js';
 import { getAuthStatus, runDoctorChecks, runConnectivityChecks, formatDoctorReport } from './doctor.js';
@@ -51,14 +56,6 @@ export function resolveBooleanOption(options, flags, key) {
   }
   if (flags[key] !== undefined) return Boolean(flags[key]);
   return undefined;
-}
-
-export function buildPagination(options) {
-  if (!options.limit && !options.page) return undefined;
-  return {
-    page: Math.max(1, parseInt(options.page, 10) || 1),
-    per_page: options.limit,
-  };
 }
 
 // ============= Field Filtering =============
@@ -117,7 +114,10 @@ export function filterFields(data, fields) {
  * Parse comma-separated fields string
  */
 export function parseFields(fieldsOption) {
-  if (!fieldsOption) return null;
+  if (fieldsOption === undefined || fieldsOption === '') return null;
+  if (typeof fieldsOption !== 'string') {
+    throw new NansenError('--fields must be a comma-separated string', ErrorCode.INVALID_PARAMS);
+  }
   return fieldsOption.split(',').map(f => f.trim()).filter(f => f.length > 0);
 }
 
@@ -167,18 +167,16 @@ export function compactSchema(schema) {
   };
 }
 
-/**
- * Compare two semver strings. Returns 1 if a > b, -1 if a < b, 0 if equal.
- */
-function compareSemver(a, b) {
-  const parse = v => v.replace(/^v/, '').split('.').map(Number);
-  const [aM, am, ap] = parse(a);
-  const [bM, bm, bp] = parse(b);
-  if (aM !== bM) return aM > bM ? 1 : -1;
-  if (am !== bm) return am > bm ? 1 : -1;
-  if (ap !== bp) return ap > bp ? 1 : -1;
-  return 0;
-}
+// Long options that never consume the next argument. The shell-completion
+// generator needs the same list to tell an option's value apart from a
+// subcommand, so it lives here rather than inline in parseArgs.
+export const VALUELESS_FLAGS = new Set([
+  'pretty', 'help', 'version', 'table', 'no-retry', 'cache', 'no-cache', 'stream',
+  'enrich', 'full', 'human', 'enabled', 'disabled', 'expert', 'json', 'offline',
+  'no-simulate', 'no-verify-outcome', 'no-revoke-excessive-allowance', 'dry-run',
+  'send-api-key', 'all', 'max', 'gasless', 'auto-slippage', 'unsafe-no-password',
+  'reveal',
+]);
 
 export function parseArgs(args) {
   const result = { _: [], flags: {}, options: {} };
@@ -190,9 +188,12 @@ export function parseArgs(args) {
       const key = arg.slice(2);
       const next = args[i + 1];
       
-      if (key === 'pretty' || key === 'help' || key === 'version' || key === 'table' || key === 'no-retry' || key === 'cache' || key === 'no-cache' || key === 'stream' || key === 'enrich' || key === 'full' || key === 'human' || key === 'enabled' || key === 'disabled' || key === 'expert' || key === 'json' || key === 'offline' || key === 'reveal') {
+      if (VALUELESS_FLAGS.has(key)) {
         result.flags[key] = true;
-      } else if (next && (!next.startsWith('-') || /^-\d/.test(next))) {
+      // `next !== undefined` rather than a truthiness check: an explicit empty
+      // string is a real value, and skipping it here left `""` dangling to be
+      // picked up as a positional arg on the next iteration.
+      } else if (next !== undefined && (!next.startsWith('-') || /^-\d/.test(next))) {
         // Try to parse as JSON first (for objects/arrays/booleans),
         // but keep numeric strings as strings to avoid precision loss
         // and scientific notation for large integers (e.g. 1e+21).
@@ -226,12 +227,50 @@ export function parseArgs(args) {
   return result;
 }
 
+function parseNonNegativeSafeIntegerOption(name, options, flags, defaultValue) {
+  if (flags[name]) {
+    throw new NansenError(
+      `--${name} requires a non-negative safe integer value`,
+      ErrorCode.INVALID_PARAMS,
+    );
+  }
+  if (options[name] === undefined) return defaultValue;
+
+  const rawValue = options[name];
+  if (Array.isArray(rawValue)) {
+    throw new NansenError(
+      `--${name} may only be specified once`,
+      ErrorCode.INVALID_PARAMS,
+    );
+  }
+  if (typeof rawValue === 'string' && rawValue.trim() === '') {
+    throw new NansenError(
+      `--${name} requires a non-negative safe integer value`,
+      ErrorCode.INVALID_PARAMS,
+    );
+  }
+  const value = typeof rawValue === 'string' || typeof rawValue === 'number'
+    ? Number(rawValue)
+    : NaN;
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new NansenError(
+      `--${name} must be a non-negative safe integer; received: ${String(rawValue)}`,
+      ErrorCode.INVALID_PARAMS,
+    );
+  }
+  return value;
+}
+
 // Format a single value for table display
 export function formatValue(val) {
   if (val === null || val === undefined) return '';
   if (typeof val === 'number') {
     if (Math.abs(val) >= 1000000) return (val / 1000000).toFixed(2) + 'M';
-    if (Math.abs(val) >= 1000) return (val / 1000).toFixed(2) + 'K';
+    if (Math.abs(val) >= 1000) {
+      const formatted = (val / 1000).toFixed(2);
+      if (Math.abs(parseFloat(formatted)) >= 1000) return (val / 1000000).toFixed(2) + 'M';
+      return formatted + 'K';
+    }
     if (Number.isInteger(val)) return val.toString();
     return val.toFixed(2);
   }
@@ -261,7 +300,7 @@ export function formatTable(data) {
   }
 
   // Get columns from first record, prioritize common useful fields
-  const priorityFields = ['token_symbol', 'token_name', 'symbol', 'name', 'address', 'label', 'chain', 'value_usd', 'amount', 'pnl_usd', 'price_usd', 'volume_usd', 'net_flow_usd', 'timestamp', 'block_timestamp'];
+  const priorityFields = ['token_symbol', 'token_name', 'symbol', 'name', 'wallet_address', 'address', 'label', 'chain', 'value_usd', 'amount', 'pnl_usd', 'price_usd', 'volume_usd', 'net_flow_usd', 'timestamp', 'block_timestamp'];
   const allKeys = [...new Set(records.flatMap(r => Object.keys(r)))];
 
   // Sort: priority fields first, then alphabetically
@@ -455,22 +494,6 @@ export function parseDateOption(dateOption, days = 30) {
   return { from, to };
 }
 
-// Parse simple sort syntax: "field:direction" or "field" (defaults to DESC)
-export function parseSort(sortOption, orderByOption) {
-  // If --order-by is provided, use it (full JSON control)
-  if (orderByOption) return orderByOption;
-  
-  // If no --sort, return undefined
-  if (!sortOption) return undefined;
-  
-  // Parse --sort field:direction or --sort field
-  const parts = sortOption.split(':');
-  const field = parts[0];
-  const direction = (parts[1] || 'desc').toUpperCase();
-  
-  return [{ field, direction }];
-}
-
 // Enrich transfers with Nansen labels for from/to addresses
 async function enrichTransfers(result, apiInstance, chain) {
   const transfers = result?.data?.results || result?.transfers || result?.data || [];
@@ -489,7 +512,9 @@ async function enrichTransfers(result, apiInstance, chain) {
   for (const addr of addrs) {
     try {
       const labelsResult = await apiInstance.addressLabels({ address: addr, chain });
-      labelMap[addr] = labelsResult?.labels || labelsResult?.data?.results || [];
+      labelMap[addr] = Array.isArray(labelsResult?.data)
+        ? labelsResult.data.map(item => item.label)
+        : labelsResult?.labels || [];
     } catch {
       labelMap[addr] = [];
     }
@@ -535,6 +560,35 @@ export function parseAddressList(raw) {
   }
 }
 
+/**
+ * Read an address list from a file: either a JSON array of address strings or
+ * one address per line. Shared by the profiler commands that accept --file.
+ */
+function readAddressFile(file) {
+  let content;
+  try {
+    content = fs.readFileSync(file, 'utf8');
+  } catch (err) {
+    throw new NansenError(
+      `Could not read --file ${file}: ${err.code === 'ENOENT' ? 'no such file' : err.message}`,
+      ErrorCode.INVALID_PARAMS
+    );
+  }
+  try {
+    const parsed = JSON.parse(content);
+    if (!Array.isArray(parsed) || !parsed.every(item => typeof item === 'string')) {
+      throw new NansenError(
+        'File must contain a JSON array of address strings or one address per line',
+        ErrorCode.INVALID_PARAMS
+      );
+    }
+    return parsed.map(a => a.trim()).filter(Boolean);
+  } catch (e) {
+    if (e instanceof NansenError) throw e;
+    return content.split('\n').map(a => a.trim()).filter(Boolean);
+  }
+}
+
 // ============= Composite Functions =============
 
 export async function batchProfile(api, params = {}) {
@@ -568,7 +622,10 @@ export async function batchProfile(api, params = {}) {
     }
     try {
       if (include.includes('labels')) {
-        entry.labels = await api.addressLabels({ address, chain });
+        const labelsResult = await api.addressLabels({ address, chain });
+        entry.labels = Array.isArray(labelsResult?.data)
+          ? labelsResult.data
+          : labelsResult?.labels || [];
       }
       if (include.includes('balance')) {
         entry.balance = await api.addressBalance({ address, chain });
@@ -724,17 +781,19 @@ COMMANDS:
   trade       DEX swaps/bridges: quote, execute, bridge-status, limit-order
   bridge      Hyperliquid bridge: quote, execute, status (EVM <-> HL)
   perp        Hyperliquid perps: order, cancel, close, leverage, positions
-  research    analytics: smart-money, profiler, token, search, perp, portfolio, points
+  research    analytics: smart-money, profiler, token, search, perp, portfolio
   wallet      create, list, show, export, default, delete, forget-password
   agent       Ask the Nansen AI research agent (fast/expert modes)
   alerts      list, create, update, toggle, delete
   web         search, fetch
+  mcp         install/uninstall/verify the Nansen MCP server
   account     Show API key status, plan, and remaining credits
   auth        status — offline auth status: key source, wallets (no network)
-  login       Save API key (--api-key <key>, --human, or NANSEN_API_KEY env var)
+  login       Save API key (--human, NANSEN_API_KEY, or --api-key <key>)
   logout      Remove saved API key
   doctor      Diagnostics: auth, wallets, caches, connectivity (--offline --json)
   schema      JSON schema for all commands (use "nansen schema <cmd>" for one)
+  completion  Shell completions: bash, zsh, fish
   cache       clear
   changelog   --since <version> to filter
 
@@ -763,7 +822,7 @@ EXAMPLES:
   nansen research profiler balance --address 0x... --chain ethereum
 
 DEPRECATED ALIASES (still work, will be removed in a future version):
-  smart-money, profiler, token, search, perp, portfolio, points → use "nansen research <command>"
+  smart-money, profiler, token, search, perp, portfolio → use "nansen research <command>"
   quote, execute → use "nansen trade <command>"
 
 Research chains: ethereum, solana, base, bnb, arbitrum, polygon, optimism, avalanche, linea, scroll, mantle, ronin, sei, plasma, sonic, monad, hyperevm, iotaevm
@@ -774,7 +833,7 @@ Labels: Fund, Smart Trader, 30D/90D/180D Smart Trader, Smart HL Perps Trader
 Docs: https://docs.nansen.ai
 Skills: npx skills add nansen-ai/nansen-cli (agent-optimised docs per command group)
 
-Telemetry: anonymous usage stats (commands, timing, errors). Perp order/close additionally send the order side and Hyperliquid order id. Disable: DO_NOT_TRACK=1
+Telemetry: anonymous usage stats (commands, timing, errors). Perp order/close additionally send each leg's side, outcome, order id, shared submission id, and a SHA-256 wallet identifier. Raw wallet, price, size, and exchange error text are not sent. Disable: DO_NOT_TRACK=1
 `;
 
 // Usage text for the `trade` command group. Shared by the trade handler and the
@@ -822,43 +881,45 @@ CROSS-CHAIN NOTES (when using --to-chain):
   Bridge providers: Li.Fi or Relay (selected automatically based on best price)
   Typical bridge time: 1-5 minutes`;
 
-// Helper to prompt for input (exported for mocking)
-export async function prompt(question, hidden = false) {
+// Helper to prompt for input (exported for mocking). Output defaults to stderr
+// so the prompt and masked `*` characters stay on the terminal and never land
+// in a redirected stdout (matching wallet.js promptPassword).
+export async function prompt(question, hidden = false, { input = process.stdin, output = process.stderr } = {}) {
   return new Promise((resolve) => {
-    if (hidden && process.stdout.isTTY) {
-      process.stdout.write(question);
-      let input = '';
-      process.stdin.setRawMode(true);
-      process.stdin.resume();
-      process.stdin.setEncoding('utf8');
+    if (hidden && input.isTTY) {
+      output.write(question);
+      let value = '';
+      input.setRawMode(true);
+      input.resume();
+      input.setEncoding('utf8');
       
       const onData = (char) => {
         if (char === '\n' || char === '\r') {
-          process.stdin.setRawMode(false);
-          process.stdin.pause();
-          process.stdin.removeListener('data', onData);
-          process.stdout.write('\n');
-          resolve(input);
+          input.setRawMode(false);
+          input.pause();
+          input.removeListener('data', onData);
+          output.write('\n');
+          resolve(value);
         } else if (char === '\u0003') {
           // Ctrl+C
           process.exit();
         } else if (char === '\u007F' || char === '\b') {
           // Backspace
-          if (input.length > 0) {
-            input = input.slice(0, -1);
-            process.stdout.write('\b \b');
+          if (value.length > 0) {
+            value = value.slice(0, -1);
+            output.write('\b \b');
           }
         } else {
-          input += char;
-          process.stdout.write('*');
+          value += char;
+          output.write('*');
         }
       };
       
-      process.stdin.on('data', onData);
+      input.on('data', onData);
     } else {
       const rl = readline.createInterface({
-        input: process.stdin,
-        output: process.stdout
+        input,
+        output
       });
       rl.question(question, (answer) => {
         rl.close();
@@ -914,6 +975,7 @@ export function buildCommands(deps = {}) {
       log(formatDoctorReport(checks, { cliVersion: VERSION, offline: Boolean(flags.offline) }));
     },
 
+
     'web': async (args, apiInstance, flags, options) => {
       const subcommand = args[0] || 'help';
       const subArgs = args.slice(1);
@@ -922,8 +984,14 @@ export function buildCommands(deps = {}) {
         'search': async () => {
           // Accept queries as positional args or --query (repeated)
           let queries = subArgs.length > 0 ? subArgs : [];
-          if (options.query) {
+          if (options.query !== undefined) {
             const fromOption = Array.isArray(options.query) ? options.query : [options.query];
+            if (!fromOption.every(q => typeof q === 'string')) {
+              throw new NansenError(
+                '--query values must be strings',
+                ErrorCode.INVALID_PARAMS,
+              );
+            }
             queries = queries.concat(fromOption);
           }
           queries = queries.filter(q => q.trim());
@@ -948,7 +1016,7 @@ export function buildCommands(deps = {}) {
         'fetch': async () => {
           // Accept URLs as positional args or --url (repeated)
           let urls = subArgs.length > 0 ? subArgs : [];
-          if (options.url) {
+          if (options.url !== undefined) {
             const fromOption = Array.isArray(options.url) ? options.url : [options.url];
             urls = urls.concat(fromOption);
           }
@@ -959,6 +1027,12 @@ export function buildCommands(deps = {}) {
             try { new URL(u); } catch {
               throw new NansenError(`Invalid URL: "${u}". URLs must include a scheme, e.g. https://example.com`, ErrorCode.INVALID_PARAMS);
             }
+          }
+          if (Array.isArray(options.question)) {
+            throw new NansenError('--question may only be specified once', ErrorCode.INVALID_PARAMS);
+          }
+          if (options.question !== undefined && typeof options.question !== 'string') {
+            throw new NansenError('--question must be a string', ErrorCode.INVALID_PARAMS);
           }
           if (!options.question || !options.question.trim()) {
             throw new NansenError('--question is required and cannot be blank. Usage: nansen web fetch https://example.com --question "What is this about?"', ErrorCode.MISSING_PARAM);
@@ -988,13 +1062,14 @@ export function buildCommands(deps = {}) {
       if (flags.help || flags.h) {
         log('nansen login - Save your Nansen API key\n');
         log('USAGE:');
-        log('  nansen login --api-key <key>');
-        log('  NANSEN_API_KEY=<key> nansen login');
-        log('  nansen login --human              (interactive prompt)\n');
+        log('  nansen login --human              (interactive prompt; key never enters shell history)');
+        log('  nansen login                      (uses NANSEN_API_KEY when already set)');
+        log('  nansen login --api-key <key>      (literal key IS recorded in shell history)\n');
         log('OPTIONS:');
-        log('  --api-key <key>   Your Nansen API key');
+        log('  --api-key <key>   Your Nansen API key (recorded in shell history — prefer --human)');
         log('  --human           Enable interactive prompt');
         log('  --help            Show this help\n');
+        log('Setting a literal key in a command may record it in shell history.');
         log('Get your API key at: https://app.nansen.ai/auth/agent-setup');
         return;
       }
@@ -1007,9 +1082,9 @@ export function buildCommands(deps = {}) {
 
       if (!apiKey && flags.human) {
         if (!isTTY) {
-          throw new CommandError('--human requires an interactive terminal. Use --api-key or NANSEN_API_KEY env var instead.', 'NOT_A_TTY', {
+          throw new CommandError('--human requires an interactive terminal. Set NANSEN_API_KEY in the environment (or pass --api-key <key>, which is recorded in shell history).', 'NOT_A_TTY', {
             error: 'NOT_A_TTY',
-            message: '--human requires an interactive terminal. Use --api-key or NANSEN_API_KEY env var instead.',
+            message: '--human requires an interactive terminal. Set NANSEN_API_KEY in the environment (or pass --api-key <key>, which is recorded in shell history).',
           });
         }
         log('Nansen CLI Login\n');
@@ -1022,8 +1097,8 @@ export function buildCommands(deps = {}) {
           error: 'API_KEY_REQUIRED',
           message: 'No API key provided.',
           resolution: [
-            'Run: nansen login --api-key <key>',
-            'Or set NANSEN_API_KEY environment variable',
+            'Run in an interactive terminal: nansen login --human',
+            'Or set NANSEN_API_KEY in the environment',
             'Get your API key at: https://app.nansen.ai/auth/agent-setup',
           ],
         });
@@ -1044,13 +1119,28 @@ export function buildCommands(deps = {}) {
           throw new CommandError('The API key is not valid.', 'INVALID_API_KEY', {
             error: 'INVALID_API_KEY',
             message: 'The API key is not valid.',
-            resolution: ['Check your key at https://app.nansen.ai/auth/agent-setup'],
+            resolution: ['Check or rotate your key at https://app.nansen.ai/api?tab=api'],
           });
         }
-        throw new CommandError(`Could not verify API key: ${error.message}`, 'VERIFICATION_FAILED', {
+        // Restore signal from the STRUCTURED error code only — never from
+        // error.message, which can echo the upstream response body (and the key
+        // with it). A transient failure shouldn't read as "check your key".
+        let message = 'Could not verify API key.';
+        let resolution = ['Check your internet connection', 'Try again'];
+        if (error.code === ErrorCode.RATE_LIMITED) {
+          message = 'Rate limited while verifying the API key.';
+          resolution = ['Wait a moment, then run nansen login again'];
+        } else if (error.code === ErrorCode.SERVER_ERROR || error.code === ErrorCode.SERVICE_UNAVAILABLE) {
+          message = 'The Nansen API is unavailable right now, so the key could not be verified.';
+          resolution = ['Try again shortly'];
+        } else if (error.code === ErrorCode.TIMEOUT) {
+          message = 'Timed out verifying the API key.';
+          resolution = ['Check your connection', 'Try again'];
+        }
+        throw new CommandError(message, 'VERIFICATION_FAILED', {
           error: 'VERIFICATION_FAILED',
-          message: `Could not verify API key: ${error.message}`,
-          resolution: ['Check your internet connection', 'Try again'],
+          message,
+          resolution,
         });
       }
 
@@ -1102,6 +1192,15 @@ export function buildCommands(deps = {}) {
       }
       const since = _options.since;
       if (since) {
+        // compareSemver treats a missing trailing component as 0, so accept
+        // "1", "1.43", and "1.43.0" alike here — but anything that isn't
+        // digits-and-dots (e.g. "abc") needs a clear error instead of
+        // silently comparing as if it were version 0.0.0, which would show
+        // every entry rather than flag the typo.
+        if (!/^v?\d+(\.\d+){0,2}$/.test(String(since))) {
+          log(`Invalid --since value "${since}": expected a version like 1.43 or 1.43.0.`);
+          return;
+        }
         // Show only entries from the given version onwards
         const lines = content.split('\n');
         const filtered = [];
@@ -1163,7 +1262,7 @@ export function buildCommands(deps = {}) {
           log('CACHE OPTIONS (for any command):');
           log('  --cache               Enable caching for this session');
           log('  --no-cache            Bypass cache for this request');
-          log('  --cache-ttl <seconds> Set cache TTL (default: 300)');
+          log('  --cache-ttl <seconds> Set non-negative safe integer cache TTL (default: 300)');
         }
       };
       
@@ -1253,6 +1352,12 @@ export function buildCommands(deps = {}) {
         'related-wallets': () => apiInstance.addressRelatedWallets({ address, chain, orderBy, pagination }),
         'first-funder': () => apiInstance.addressFirstFunder({ address }),
         'counterparties': () => apiInstance.addressCounterparties({ address, chain, filters, orderBy, pagination, days }),
+        'counterparties-batch': () => {
+          const addresses = options.addresses
+            ? parseAddressList(options.addresses)
+            : (options.file ? readAddressFile(options.file) : []);
+          return apiInstance.addressCounterpartiesBatch({ addresses, chain, filters, orderBy, pagination, days });
+        },
         'pnl-summary': () => apiInstance.addressPnlSummary({ address, chain, orderBy, pagination, days }),
         'perp-positions': () => apiInstance.addressPerpPositions({ address, filters, orderBy, pagination }),
         'perp-trades': () => apiInstance.addressPerpTrades({ address, filters, orderBy, pagination, days }),
@@ -1265,25 +1370,13 @@ export function buildCommands(deps = {}) {
           if (options.addresses) {
             addresses = parseAddressList(options.addresses);
           } else if (options.file) {
-            const content = fs.readFileSync(options.file, 'utf8');
-            try {
-              const parsed = JSON.parse(content);
-              if (!Array.isArray(parsed)) {
-                throw new NansenError('File must contain a JSON array of address strings or one address per line', ErrorCode.INVALID_PARAMS);
-              }
-              if (!parsed.every(item => typeof item === 'string')) {
-                throw new NansenError('File must contain a JSON array of address strings or one address per line', ErrorCode.INVALID_PARAMS);
-              }
-              addresses = parsed.map(a => a.trim()).filter(Boolean);
-            } catch (e) {
-              if (e instanceof NansenError) throw e;
-              addresses = content.split('\n').map(a => a.trim()).filter(Boolean);
-            }
+            addresses = readAddressFile(options.file);
           }
           if (addresses.length > 100) {
             throw new NansenError('Batch is limited to 100 addresses', ErrorCode.INVALID_PARAMS);
           }
-          const include = options.include ? options.include.split(',').map(s => s.trim()) : ['labels', 'balance'];
+          const parsedInclude = parseCsvOption(options.include, 'include');
+          const include = (parsedInclude && parsedInclude.length > 0) ? parsedInclude : ['labels', 'balance'];
           const delayMs = options.delay ? parseInt(options.delay) : 1000;
           return batchProfile(apiInstance, { addresses, chain, include, delayMs });
         },
@@ -1298,7 +1391,7 @@ export function buildCommands(deps = {}) {
           return compareWallets(apiInstance, { addresses: addrs, chain, days });
         },
         'help': () => ({
-          commands: ['balance', 'labels', 'transactions', 'pnl', 'search', 'historical-balances', 'related-wallets', 'first-funder', 'counterparties', 'pnl-summary', 'perp-positions', 'perp-trades', 'dex-trades', 'batch', 'trace', 'compare'],
+          commands: ['balance', 'labels', 'transactions', 'pnl', 'search', 'historical-balances', 'related-wallets', 'first-funder', 'counterparties', 'counterparties-batch', 'pnl-summary', 'perp-positions', 'perp-trades', 'dex-trades', 'batch', 'trace', 'compare'],
           description: 'Wallet profiling endpoints',
           example: 'nansen research profiler compare --addresses "0xABC...,0xDEF..." --chain ethereum'
         })
@@ -1477,15 +1570,9 @@ export function buildCommands(deps = {}) {
       const handlers = {
         'screener': () => {
           const traderType = options['trader-type'];
-          const sectorsFilter = options['sectors-filter']
-            ? options['sectors-filter'].split(',').map(s => s.trim()).filter(Boolean)
-            : undefined;
-          const smLabelFilter = options['sm-label-filter']
-            ? options['sm-label-filter'].split(',').map(s => s.trim()).filter(Boolean)
-            : undefined;
-          const traderLabelFilter = options['trader-label-filter']
-            ? options['trader-label-filter'].split(',').map(s => s.trim()).filter(Boolean)
-            : undefined;
+          const sectorsFilter = parseCsvOption(options['sectors-filter'], 'sectors-filter');
+          const smLabelFilter = parseCsvOption(options['sm-label-filter'], 'sm-label-filter');
+          const traderLabelFilter = parseCsvOption(options['trader-label-filter'], 'trader-label-filter');
           return apiInstance.perpScreener({ filters, orderBy, pagination, days, traderType, sectorsFilter, smLabelFilter, traderLabelFilter });
         },
         'leaderboard': () => {
@@ -1500,7 +1587,7 @@ export function buildCommands(deps = {}) {
       };
 
       if (!handlers[subcommand]) {
-        return { error: `Unknown subcommand: ${subcommand}`, available: Object.keys(handlers) };
+        throw new NansenError(`Unknown perp analytics subcommand: ${subcommand}. Available: screener, leaderboard`, ErrorCode.UNKNOWN);
       }
 
       return handlers[subcommand]();
@@ -1515,25 +1602,8 @@ export function buildCommands(deps = {}) {
       });
     },
 
-    'points': async (args, apiInstance, flags, options) => {
-      const subcommand = args[0] || 'help';
-      const tier = options.tier;
-      const pagination = buildPagination(options);
-
-      const handlers = {
-        'leaderboard': () => apiInstance.pointsLeaderboard({ tier, pagination }),
-        'help': () => ({
-          commands: ['leaderboard'],
-          description: 'Nansen Points analytics endpoints',
-          example: 'nansen points leaderboard --limit 100'
-        })
-      };
-
-      if (!handlers[subcommand]) {
-        return { error: `Unknown subcommand: ${subcommand}`, available: Object.keys(handlers) };
-      }
-
-      return handlers[subcommand]();
+    'points': async () => {
+      throw new CommandError('The points leaderboard endpoint has been removed. Run "nansen research" to explore other analytics commands.', 'COMMAND_UNAVAILABLE');
     },
 
     'prediction-market': async (args, apiInstance, flags, options) => {
@@ -1550,14 +1620,14 @@ export function buildCommands(deps = {}) {
       const pagination = buildPagination(options);
 
       // Screener-specific filter options
-      const tags = options.tags ? options.tags.split(',').map(t => t.trim()) : undefined;
+      const tags = parseCsvOption(options.tags, 'tags');
       const minLiquidity = options['min-liquidity'] != null ? Number(options['min-liquidity']) : undefined;
       const maxLiquidity = options['max-liquidity'] != null ? Number(options['max-liquidity']) : undefined;
       const minUniqueTraders24h = options['min-unique-traders-24h'] != null ? Number(options['min-unique-traders-24h']) : undefined;
       const maxUniqueTraders24h = options['max-unique-traders-24h'] != null ? Number(options['max-unique-traders-24h']) : undefined;
       const minVolume24hr = options['min-volume-24hr'] != null ? Number(options['min-volume-24hr']) : undefined;
       const maxVolume24hr = options['max-volume-24hr'] != null ? Number(options['max-volume-24hr']) : undefined;
-      const negRisk = options['neg-risk'] != null ? options['neg-risk'] === 'true' : undefined;
+      const negRisk = resolveBooleanOption(options, flags, 'neg-risk');
       const minOpenInterest = options['min-open-interest'] != null ? Number(options['min-open-interest']) : undefined;
       const maxOpenInterest = options['max-open-interest'] != null ? Number(options['max-open-interest']) : undefined;
       const endDateBefore = options['end-date-before'];
@@ -1601,32 +1671,33 @@ export function buildCommands(deps = {}) {
   // it, so it has to be taken exactly once, here.
   const perpAnalytics = cmds['perp'];
 
-  const researchHistorical = buildResearchCommands(deps).research;
+  const researchSub = buildResearchCommands(deps).research;
 
   cmds['research'] = async (args, apiInstance, flags, options) => {
     const rawCategory = args[0];
     if (!rawCategory || rawCategory === 'help') {
       return {
         categories: [...RESEARCH_CATEGORIES],
+        subcommands: [...RESEARCH_SUBCOMMANDS],
         historical: [...RESEARCH_HISTORICAL_SUBCOMMANDS],
         aliases: RESEARCH_CATEGORY_ALIASES,
         description: 'Research and analytics commands',
         example: 'nansen research smart-money netflow --chain solana'
       };
     }
-    if (RESEARCH_HISTORICAL_SUBCOMMANDS.has(rawCategory)) {
-      return researchHistorical(args, apiInstance, flags, options);
+    if (RESEARCH_SUBCOMMANDS.has(rawCategory)) {
+      return researchSub(args, apiInstance, flags, options);
     }
     const category = RESEARCH_CATEGORY_ALIASES[rawCategory] || rawCategory;
     if (!RESEARCH_CATEGORIES.has(category)) {
-      throw new NansenError(`Unknown research category: ${rawCategory}. Available: ${[...RESEARCH_CATEGORIES, ...RESEARCH_HISTORICAL_SUBCOMMANDS].join(', ')}`, ErrorCode.UNKNOWN);
+      throw new NansenError(`Unknown research category: ${rawCategory}. Available: ${[...RESEARCH_CATEGORIES, ...RESEARCH_SUBCOMMANDS].join(', ')}`, ErrorCode.UNKNOWN);
     }
     // `research perp` reaches only the analytics half (screener/leaderboard) —
-    // the trading subcommands live at the top level. Routing its help through
-    // cmds['perp'] printed the trading help, advertising order/close/leverage
-    // from a command that can't run them.
-    if (category === 'perp' && (!args[1] || args[1] === 'help')) {
-      return perpAnalytics(['help'], apiInstance, flags, options);
+    // the trading subcommands live at the top level. Use the captured handler
+    // for every subcommand because cmds['perp'] is replaced below by the
+    // combined top-level trading dispatcher.
+    if (category === 'perp') {
+      return perpAnalytics(args.slice(1), apiInstance, flags, options);
     }
     return cmds[category](args.slice(1), apiInstance, flags, options);
   };
@@ -1745,7 +1816,7 @@ USAGE:
 }
 
 // Categories that moved under 'research'
-export const DEPRECATED_TO_RESEARCH = new Set(['smart-money', 'profiler', 'token', 'search', 'portfolio', 'points']);
+export const DEPRECATED_TO_RESEARCH = new Set(['smart-money', 'profiler', 'token', 'search', 'portfolio']);
 // Subcommands that moved under 'trade'
 export const DEPRECATED_TO_TRADE = new Set(['quote', 'execute']);
 
@@ -1801,13 +1872,13 @@ export function generateSubcommandHelp(command, subcommand, prefix = null) {
   const exampleValues = { address: '0x...', token: '0x...', query: '"term"', symbol: 'BTC', date: '2024-01-01' };
   const chain = subSchema.options?.chain?.default || 'solana';
   const cmdPrefix = prefix || (DEPRECATED_TO_RESEARCH.has(command) ? `research ${command}` : command);
-  let example = `nansen ${cmdPrefix} ${subcommand}`;
-  if (subSchema.options) {
+  let example = subSchema.examples?.[0] || `nansen ${cmdPrefix} ${subcommand}`;
+  if (!subSchema.examples?.length && subSchema.options) {
     for (const [name, opt] of Object.entries(subSchema.options)) {
       if (opt.required) example += ` --${name} ${exampleValues[name] || '<val>'}`;
     }
   }
-  if (subSchema.options?.chain && !subSchema.options.chain.required) {
+  if (!subSchema.examples?.length && subSchema.options?.chain && !subSchema.options.chain.required) {
     example += ` --chain ${chain}`;
   }
   lines.push(`Example: ${example}`);
@@ -1846,7 +1917,10 @@ export async function runCLI(rawArgs, deps = {}) {
   // `auth` and `doctor --offline` promise zero network activity — that
   // contract covers the background update-check fetch and telemetry too,
   // not just the command's own requests.
-  const isOfflineCommand = command === 'auth' || (command === 'doctor' && flags.offline);
+  const isMcpUsage = command === 'mcp' && (subcommand !== 'verify' || flags.help || flags.h);
+  // `completion` renders from the checked-in schema — no network, and its
+  // stdout is piped straight into a shell, so keep the update check out of it.
+  const isOfflineCommand = command === 'auth' || (command === 'doctor' && flags.offline) || isMcpUsage || command === 'completion';
   const trackSucceeded = isOfflineCommand ? async () => {} : trackCommandSucceeded;
   const trackFailed = isOfflineCommand ? async () => {} : trackCommandFailed;
 
@@ -1866,7 +1940,9 @@ export async function runCLI(rawArgs, deps = {}) {
     return '';
   };
 
-  const commands = { ...buildCommands(deps), ...buildWalletCommands(deps), ...buildTradingCommands(deps), ...buildAlertsCommands(deps), ...buildAgentCommands(deps), ...commandOverrides };
+  // mcp prints its own output via `log`; runCLI callers inject their stdout
+  // sink as `output`, so map it across (an explicit `log` dep still wins).
+  const commands = { ...buildCommands(deps), ...buildWalletCommands(deps), ...buildTradingCommands(deps), ...buildAlertsCommands(deps), ...buildAgentCommands(deps), ...buildMcpCommands({ ...deps, log: deps.log ?? output }), ...buildCompletionCommands({ ...deps, log: deps.log ?? output }), ...commandOverrides };
 
   if (flags.version || flags.v) {
     output(VERSION);
@@ -2016,15 +2092,16 @@ export async function runCLI(rawArgs, deps = {}) {
 
   try {
     // Configure retry options
+    const maxRetries = parseNonNegativeSafeIntegerOption('retries', options, flags, 3);
     const retryOptions = flags['no-retry']
       ? { maxRetries: 0 }
-      : { maxRetries: options.retries !== undefined ? (Number.isNaN(parseInt(options.retries, 10)) ? 3 : parseInt(options.retries, 10)) : 3 };
+      : { maxRetries };
 
     // Configure cache options
-    const cacheTtl = options['cache-ttl'] !== undefined ? parseInt(options['cache-ttl'], 10) : 300;
+    const cacheTtl = parseNonNegativeSafeIntegerOption('cache-ttl', options, flags, 300);
     const cacheOptions = {
       enabled: flags['cache'] && !flags['no-cache'],
-      ttl: Number.isNaN(cacheTtl) ? 300 : cacheTtl
+      ttl: cacheTtl
     };
 
     const defaultHeaders = {};
@@ -2042,6 +2119,19 @@ export async function runCLI(rawArgs, deps = {}) {
     }
 
     let result = await commands[command](subArgs, api, flags, options);
+
+    // The cache marker is hung off the payload's `_meta` by getCachedResponse(),
+    // never as a top-level `fromCache`. Capture it here, before `--fields`
+    // filtering below drops `_meta` along with every other unrequested key —
+    // read any later and a cache hit with `--fields` reports as a live call.
+    //
+    // `_meta` alone isn't enough either: handlers are free to rebuild their
+    // result and some do (`alerts list` filters the array into a fresh one),
+    // which drops the marker before we get here. `api.servedFromCache` is set
+    // on the instance next to the cache-hit early return in request(), so it
+    // survives that reshaping. Compared against `true` so a stubbed API whose
+    // every property is a mock function doesn't read as a hit.
+    const fromCache = !!result?._meta?.fromCache || api.servedFromCache === true;
 
     // Credit balance warning, from the headers on the call just made. Goes to
     // stderr so it never contaminates the JSON on stdout that agents parse.
@@ -2083,7 +2173,7 @@ export async function runCLI(rawArgs, deps = {}) {
     // Alerts list with --table uses custom table format
     if (command === 'alerts' && subcommand === 'list' && table) {
       output(formatAlertsTable(result));
-      await trackSucceeded({ command: fullCommand, duration_ms: Date.now() - startTime, flags: usedFlags, chain });
+      await trackSucceeded({ command: fullCommand, duration_ms: Date.now() - startTime, from_cache: fromCache, flags: usedFlags, chain });
       return { type: 'success', data: result };
     }
 
@@ -2094,14 +2184,14 @@ export async function runCLI(rawArgs, deps = {}) {
       if (streamOutput) {
         output(streamOutput);
       }
-      await trackSucceeded({ command: fullCommand, duration_ms: Date.now() - startTime, from_cache: !!result?.fromCache, flags: usedFlags, chain });
+      await trackSucceeded({ command: fullCommand, duration_ms: Date.now() - startTime, from_cache: fromCache, flags: usedFlags, chain });
       return { type: 'stream', data: result };
     }
 
     const successData = { success: true, data: result };
     const formatted = formatOutput(successData, { pretty, table, csv });
     output(formatted.text);
-    await trackSucceeded({ command: fullCommand, duration_ms: Date.now() - startTime, from_cache: !!result?.fromCache, flags: usedFlags, chain });
+    await trackSucceeded({ command: fullCommand, duration_ms: Date.now() - startTime, from_cache: fromCache, flags: usedFlags, chain });
     return { type: csv ? 'csv' : 'success', data: result };
   } catch (error) {
     // Unified error envelope across all command families (perp/bridge/trade):
@@ -2110,7 +2200,10 @@ export async function runCLI(rawArgs, deps = {}) {
     // data (e.g. PASSWORD_REQUIRED resolution steps) is preserved under `details`,
     // so agents get one consistent shape to branch on regardless of command.
     const errorData = formatError(error);
-    if (isUsageError(errorData, { pretty, table, csv, stream, isTTY })) {
+    if (error.reported) {
+      // The command already printed its full human-readable failure output;
+      // emitting the envelope too would produce two output shapes on stdout.
+    } else if (isUsageError(errorData, { pretty, table, csv, stream, isTTY })) {
       output(errorData.error);
     } else {
       const formatted = formatOutput(errorData, { pretty, table, csv });

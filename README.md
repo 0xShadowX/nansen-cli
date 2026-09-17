@@ -20,16 +20,26 @@ Three options — pick whichever fits your setup:
 
 1. **API key** (subscription):
    ```bash
-   nansen login --api-key <key>   # save key to ~/.nansen/config.json
-   nansen login --human           # interactive prompt
-   export NANSEN_API_KEY=...      # env var (highest priority)
-   nansen logout                  # remove saved key
+   nansen login --human   # interactive prompt; saves to ~/.nansen/config.json
+   nansen login           # uses NANSEN_API_KEY when already set
+   nansen logout          # remove saved key
    ```
+   For automation, inject `NANSEN_API_KEY` through your environment or secret manager.
    Get your API key at [app.nansen.ai/auth/agent-setup](https://app.nansen.ai/auth/agent-setup).
 
 2. **x402 micropayment** (no key needed): `nansen wallet create`, fund with USDC on Base or Solana, or USDT0 on X Layer, then call any endpoint — the CLI signs `Payment-Signature` headers automatically on 402 responses. See [Wallet](#wallet).
 
 3. **MPP via tempo** (no key needed): install the [tempo CLI](https://docs.tempo.xyz) separately, run `tempo wallet login` to set up, then call the Nansen API through `tempo request`. The Nansen API selects the MPP rail when it sees `Authorization: Payment ...`. See [MPP / Tempo](#mpp--tempo) below.
+
+## Verify your MCP setup
+
+For the hosted Nansen MCP server, verify server reachability and the supplied API key on the paid data path with:
+
+```bash
+npx -y nansen-cli mcp verify  # uses the saved key or NANSEN_API_KEY
+```
+
+The check calls `tools/list` for reachability, then calls the paid `nansen_score_top_tokens` canary tool. A successful canary costs about 1 credit; tool listings and free tools alone do not prove that a key works. The CLI cannot inspect the key inside your MCP client, so make sure this same key is in the client's `NANSEN-API-KEY` header. For the final client-config check, ask your client: “Use the `nansen_score_top_tokens` tool.”
 
 ## Commands
 
@@ -40,16 +50,100 @@ nansen agent "<question>" --expert    # deeper analysis (750 credits, Pro)
 nansen trade quote --chain solana --from SOL --to USDC --amount 1000000000
 nansen trade execute --quote <quoteId>
 nansen wallet <subcommand> [options]
+nansen mcp install <client>           # add the Nansen MCP server to Claude Code/Desktop or Cursor
+nansen completion <bash|zsh|fish>     # shell completions (no API key needed)
 nansen schema [command] [--pretty]    # full command reference (no API key needed)
 ```
 
-**Research categories:** `smart-money` (`sm`), `token` (`tgm`), `profiler` (`prof`), `portfolio` (`port`), `prediction-market` (`pm`), `search`, `perp`, `points`
+**Research categories:** `smart-money` (`sm`), `token` (`tgm`), `profiler` (`prof`), `portfolio` (`port`), `prediction-market` (`pm`), `search`, `perp`
+
+The points leaderboard API has been removed. `nansen research points leaderboard` and the legacy command `nansen points leaderboard` return `success: false` with code `COMMAND_UNAVAILABLE` and exit status `1`, without making an API request.
+
+**Direct research subcommands:**
+- `nansen research chain-rank [--timeframe-days 7|30|365] [--chain-type all|evm]` — rank chains by growth metrics
+- `nansen research token-sectors` — list token sectors available for filtering
+- `nansen research address-premium-labels --address <addr> [--chain <chain>] [--page <n>] [--limit <n>]` — get all labels for an address, including premium labels
+- `nansen research smart-money-pnl-leaderboard [--chains c1,c2] [--timeframe-days 1|7|30|90|180] [--filters '<json>'] [--sort <field[:asc|desc]>] [--page <n>] [--limit <n>]` — rank smart money wallets by PnL
+- `nansen research position-intelligence --symbol <symbol>` — aggregate Hyperliquid positions by trader cohort
+- `nansen research perp-pnl-summary --address <addr> --from-date <date> --to-date <date>` — summarize realized Hyperliquid PnL for an address
+- `nansen research transaction-with-token-transfer-lookup --transaction-hash <hash> [--chain <chain>] [--block-timestamp "YYYY-MM-DD HH:MM:SS"]` — look up a transaction and its token/NFT transfers
+
+Plus the `historical-*` point-in-time commands — run `nansen research help` for the full list.
 
 **Trade:** `quote`, `execute`, `bridge-status`, `limit-order` — DEX swaps on Solana and Base, cross-chain bridges, and Solana limit orders.
 
 **Wallet:** `create`, `list`, `show`, `export`, `default`, `delete`, `send` — local or Privy server-side wallets (EVM + Solana).
 
 Run `nansen schema --pretty` for the full subcommand and field reference.
+
+## MCP
+
+Connect any MCP client to Nansen's streamable HTTP server:
+
+- **Endpoint:** `https://mcp.nansen.ai/ra/mcp`
+- **Authentication:** `NANSEN-API-KEY` header
+- **API key:** [app.nansen.ai/auth/agent-setup](https://app.nansen.ai/auth/agent-setup)
+
+One-step install of the hosted [Nansen MCP server](https://docs.nansen.ai/mcp/overview) (`https://mcp.nansen.ai/ra/mcp`) into a local MCP client:
+
+```bash
+nansen mcp install claude-code       # ~/.claude.json (user scope)
+nansen mcp install claude-desktop    # macOS/Windows only; bridges via pinned mcp-remote
+nansen mcp install cursor            # ~/.cursor/mcp.json
+nansen mcp install cursor --dry-run  # print what would be written (key redacted)
+nansen mcp uninstall <client>        # remove the entry (add --dry-run to preview)
+```
+
+Uses the API key from `nansen login` / `NANSEN_API_KEY`; re-run `install` after rotating your key. Writes are merge-only and atomic: existing servers and settings are preserved, a `.bak` copy is written before every install or uninstall, and the CLI refuses to touch a config it can't parse. Note the client config stores the API key in plaintext — new files are created with `0600` permissions. Restart the client after installing.
+
+**Manual setup**, for other clients or if you would rather not use the CLI — the paths below, and the connection docs at [docs.nansen.ai/mcp/connecting](https://docs.nansen.ai/mcp/connecting).
+
+**One-command (Claude Code):**
+
+```bash
+claude mcp add --transport http nansen https://mcp.nansen.ai/ra/mcp --header "NANSEN-API-KEY: <your-key>"
+```
+
+**Manual (any streamable-HTTP client):** for example, add this to Cursor's `~/.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "nansen": {
+      "url": "https://mcp.nansen.ai/ra/mcp",
+      "headers": {
+        "NANSEN-API-KEY": "<your-key>"
+      }
+    }
+  }
+}
+```
+
+**Manual (stdio-only clients):** use `mcp-remote` as a bridge. Keep the header name and value in a single `args` entry, and keep the key in `env` rather than in the argument list — `mcp-remote` substitutes `${NANSEN_API_KEY}` from the environment:
+
+```json
+{
+  "mcpServers": {
+    "nansen": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote@0.2.1",
+        "https://mcp.nansen.ai/ra/mcp",
+        "--header",
+        "NANSEN-API-KEY:${NANSEN_API_KEY}"
+      ],
+      "env": {
+        "NANSEN_API_KEY": "<your-key>"
+      }
+    }
+  }
+}
+```
+
+`mcp-remote` is pinned to an exact version rather than `@latest` because the bridge handles your API key on every request, and `npx` would otherwise pull a new release automatically. `0.2.1` is the current release and the version this config is tested against; bumping it is safe — review the release and update the pin.
+
+**Claude Tag (Claude in Slack):** an admin must attach a plugin whose `.mcp.json` points at `https://mcp.nansen.ai/ra/mcp` and add a custom credential allowing the host `mcp.nansen.ai`. See the [Claude Tag custom-connections documentation](https://claude.com/docs/claude-tag/admins/connections/custom). Per-user fallback: use Claude Code or Claude Desktop.
 
 ## Trading
 
@@ -173,6 +267,28 @@ tempo request POST https://api.nansen.ai/api/v1/smart-money/netflow \
 
 > Note: MPP is server-side opt-in (`MPP_ENABLED=true` on the API). It's available on dev today and rolling out to prod — if `tempo request` returns a non-MPP 402, fall back to x402 or an API key.
 
+## Shell Completions
+
+Tab-completion for commands, subcommands, flags, and the values a flag accepts:
+
+```bash
+# bash
+echo 'eval "$(nansen completion bash)"' >> ~/.bashrc
+# or system-wide: nansen completion bash > /etc/bash_completion.d/nansen
+
+# zsh
+nansen completion zsh > "${fpath[1]}/_nansen" && compinit
+# or, in ~/.zshrc after the compinit line: eval "$(nansen completion zsh)"
+
+# fish
+nansen completion fish > ~/.config/fish/completions/nansen.fish
+```
+
+The scripts are generated from the same schema as `nansen schema`, so they cover
+every nested subcommand and stay in step with the CLI. Nothing is written to
+disk and no network call is made — the script goes to stdout. Re-run the command
+after upgrading the CLI to pick up new commands.
+
 ## Key Options
 
 | Option | Description |
@@ -216,11 +332,12 @@ nansen research smart-money netflow --chain solana --fields token_symbol,net_flo
 
 | Code | Action |
 |------|--------|
-| `CREDITS_EXHAUSTED` | Stop all API calls immediately. `details.credits.remaining` is your actual balance. Top up at [app.nansen.ai/api](https://app.nansen.ai/api). |
+| `CREDITS_EXHAUSTED` | Stop all API calls immediately. `details.credits.remaining` is your actual balance. Top up at [app.nansen.ai/api?tab=api](https://app.nansen.ai/api?tab=api). |
 | `UNAUTHORIZED` | Wrong or missing key. Re-auth. |
 | `RATE_LIMITED` | Auto-retried by CLI. `details.rateLimit.resetSeconds` is how long the window needs to drain. |
 | `UNSUPPORTED_FILTER` | Remove the filter and retry. |
 | `SERVER_ERROR` | Not your fault. Quote `details.requestId` when reporting it. |
+| `COMMAND_UNAVAILABLE` | The command is no longer available. For points leaderboard, run `nansen research` to explore other analytics commands. |
 
 **Error metadata.** When the API reports them, `details` carries:
 
@@ -239,6 +356,7 @@ Any field may be absent or `null`, meaning unknown — never assume zero. A low-
 | `command not found` | `npm install -g nansen-cli` |
 | Global install reports an older version | `npm i -g nansen-cli@latest --registry=https://registry.npmjs.org/ --prefer-online`, then check `which -a nansen` for stale binaries |
 | `UNAUTHORIZED` after login | `nansen auth status` shows which key is active and where it comes from; re-run `nansen login` or set `NANSEN_API_KEY` |
+| MCP client lists tools but paid calls fail | Run `npx -y nansen-cli mcp verify` with the saved key or `NANSEN_API_KEY`, and ensure that same key is in the client's `NANSEN-API-KEY` header |
 | Anything else misbehaving | `nansen doctor` checks your whole setup (auth, wallets, caches, connectivity) with a fix per finding |
 | Empty perp _research_ results | Use `--symbol BTC`, not `--token`. Perps are Hyperliquid-only. |
 | `perp` _trading_ prints the usage banner | Trading needs `--coin BTC` (`--symbol` also works); see the Perpetuals section. |

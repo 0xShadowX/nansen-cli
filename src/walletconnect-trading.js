@@ -43,8 +43,19 @@ function parseWcJson(output) {
  *
  * @param {string} [chainType] - Optional: 'evm' or 'solana'. Filters accounts by chain prefix.
  *   No arg = first account (backward compat).
+ * @param {number} [chainId] - Optional, 'evm' only: the specific EIP-155 chain ID the
+ *   caller is about to sign/broadcast on. When given, only an account the session has
+ *   actually approved for THAT chain (`eip155:<chainId>`) is returned — a session
+ *   connected only to, say, Ethereum mainnet must not be handed back as if it were
+ *   approved for Base just because both are "eip155:*". Mirrors the mainnet-only
+ *   exact-match already done for Solana above. Only meaningful for
+ *   chainType === 'evm' -- the Solana branch already does its own exact
+ *   match unconditionally, so omit chainId there (a chain-config chain ID
+ *   like Solana's 501 is not a CAIP-2 EIP-155 chain ID and would not match
+ *   anything); also omit it when no specific chain needs verifying at all
+ *   (chainType itself omitted, for first-account backward compat).
  */
-export async function getWalletConnectAddress(chainType) {
+export async function getWalletConnectAddress(chainType, chainId) {
   try {
     const output = await wcExec('walletconnect', ['whoami', '--json'], 3000);
     const data = JSON.parse(output);
@@ -58,6 +69,10 @@ export async function getWalletConnectAddress(chainType) {
       return solAccount?.address || null;
     }
     if (chainType === 'evm') {
+      if (chainId != null) {
+        const evmAccount = accounts.find(a => a.chain === `eip155:${chainId}`);
+        return evmAccount?.address || null;
+      }
       const evmAccount = accounts.find(a => a.chain?.startsWith('eip155:'));
       return evmAccount?.address || null;
     }
@@ -114,13 +129,15 @@ export async function sendTransactionViaWalletConnect(txData, timeoutMs = 120000
  * @param {number} chainId - EIP-155 chain ID
  * @param {bigint|string|number} amount - Allowance to grant, in base units
  * @param {bigint|string|number} [maxAllowance] - Hard cap from persisted request intent
+ * @param {object} [opts]
+ * @param {boolean} [opts.allowZero=false] - Allow a zero-amount revoke approval
  * @returns {{ txHash?: string, signedTransaction?: string }}
  */
-export async function sendApprovalViaWalletConnect(tokenAddress, spenderAddress, chainId, amount, maxAllowance) {
+export async function sendApprovalViaWalletConnect(tokenAddress, spenderAddress, chainId, amount, maxAllowance, { allowZero = false } = {}) {
   // encodeApproveCalldata enforces a valid 20-byte spender, a bounded (< MAX)
   // amount within the request cap, and exactly-68-byte calldata — so a
   // malformed or tampered spender/amount can't reshape the ABI word layout.
-  const data = encodeApproveCalldata(spenderAddress, amount, { maxAllowance });
+  const data = encodeApproveCalldata(spenderAddress, amount, { maxAllowance, allowZero });
 
   return sendTransactionViaWalletConnect({
     to: tokenAddress,

@@ -281,27 +281,32 @@ function hashPassword(password) {
 
 // ============= Prompt Helper =============
 
-async function promptPassword(question, deps = {}) {
+// Exported for testing (mirrors the exported `prompt` in cli.js). The streams
+// are injectable so the masking behavior can be exercised without a real TTY.
+export async function promptPassword(question, deps = {}, { input: inStream = process.stdin, output: outStream = process.stderr } = {}) {
   const promptFn = deps.promptFn;
   if (promptFn) {
     return promptFn(question, true);
   }
   // Fallback to readline (only available in --human mode)
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   return new Promise((resolve) => {
-    if (process.stdout.isTTY) {
-      process.stdout.write(question);
+    // Gate on stdin, not stdout: raw-mode masking disables the terminal's own
+    // echo, so a redirected stdout (e.g. `wallet export > backup.json`) can no
+    // longer fall through to readline and echo the password in cleartext. Prompt
+    // and mask characters go to stderr so they stay on the terminal and never
+    // pollute — or leak into — a redirected stdout.
+    if (inStream.isTTY) {
+      outStream.write(question);
       let input = '';
-      process.stdin.setRawMode(true);
-      process.stdin.resume();
-      process.stdin.setEncoding('utf8');
+      inStream.setRawMode(true);
+      inStream.resume();
+      inStream.setEncoding('utf8');
       const onData = (char) => {
         if (char === '\n' || char === '\r') {
-          process.stdin.setRawMode(false);
-          process.stdin.pause();
-          process.stdin.removeListener('data', onData);
-          process.stdout.write('\n');
-          rl.close();
+          inStream.setRawMode(false);
+          inStream.pause();
+          inStream.removeListener('data', onData);
+          outStream.write('\n');
           resolve(input);
         } else if (char === '\u0003') {
           process.exit();
@@ -309,11 +314,12 @@ async function promptPassword(question, deps = {}) {
           input = input.slice(0, -1);
         } else {
           input += char;
-          process.stdout.write('*');
+          outStream.write('*');
         }
       };
-      process.stdin.on('data', onData);
+      inStream.on('data', onData);
     } else {
+      const rl = readline.createInterface({ input: inStream, output: outStream });
       rl.question(question, (answer) => { rl.close(); resolve(answer); });
     }
   });
@@ -884,13 +890,15 @@ export function buildWalletCommands(deps = {}) {
             throw new CommandError('Usage: nansen wallet delete <name>', 'MISSING_ARGS');
           }
 
-          // Check if this is a Privy wallet (no password needed)
+          // Check if this is a Privy wallet (no password needed).
+          // getWalletFile() runs validateWalletName(), which rejects any name
+          // outside [a-zA-Z0-9_-]{1,64} — so the path is confined to the wallets
+          // dir and cannot traverse. deleteWallet() re-validates below.
           let isPrivy = false;
           try {
-            const walletFile = path.join(getWalletsDir(), `${name}.json`);
-            const data = JSON.parse(fs.readFileSync(walletFile, 'utf8'));
+            const data = JSON.parse(fs.readFileSync(getWalletFile(name), 'utf8'));
             if (data.provider === 'privy') isPrivy = true;
-          } catch { /* file might not exist, deleteWallet will throw */ }
+          } catch { /* invalid/missing name; deleteWallet will validate and throw */ }
 
           let password = null;
           if (!isPrivy) {
@@ -945,8 +953,10 @@ export function buildWalletCommands(deps = {}) {
             try {
               const walletName = options.wallet || getWalletConfig().defaultWallet;
               if (walletName) {
-                const walletFile = path.join(getWalletsDir(), `${walletName}.json`);
-                const data = JSON.parse(fs.readFileSync(walletFile, 'utf8'));
+                // getWalletFile() runs validateWalletName(), confining the path to
+                // the wallets dir; an invalid name throws and is ignored here, and
+                // the real wallet load downstream validates again.
+                const data = JSON.parse(fs.readFileSync(getWalletFile(walletName), 'utf8'));
                 if (data.provider === 'privy') isPrivyWallet = true;
               }
             } catch { /* ignore */ }
@@ -1133,6 +1143,8 @@ ENVIRONMENT:
   NANSEN_EVM_RPC            Custom Ethereum RPC endpoint (also generic EVM fallback)
   NANSEN_BASE_RPC           Custom Base RPC endpoint
   NANSEN_SOLANA_RPC         Custom Solana RPC endpoint
+  NANSEN_X402_MAX_AMOUNT    Max USD per x402 auto-payment (default 1.00; "unlimited" to disable)
+  NANSEN_X402_ALLOWED_PAYTO Comma-separated recipient allowlist for x402 auto-payment (optional)
 
 EXAMPLES:
   NANSEN_WALLET_PASSWORD=mypass nansen wallet create --name trading

@@ -103,6 +103,76 @@ describe('bridge quote --amount-unit (M2)', () => {
     expect(api.captured.params.amount).toBe('5000000');
   });
 
+  // Regression: the default base-units path used to skip the HL-USDC 6dp floor
+  // (only --amount-unit floored). Relay formats sendAsset to 6dp, so an unfloored
+  // 8-dp request whose last two digits are non-zero (here residue 50, the
+  // rounding boundary) got rejected at execute time — both by the currencyIn
+  // equality check and the amount cap — on a withdrawal the user legitimately
+  // asked for. Floor here so the persisted amount matches what the quote sends.
+  it('floors an HL-origin base-units amount at the 6dp rounding boundary (residue 50)', async () => {
+    const cmds = buildBridgeCommands({ log: () => {} });
+    const api = fakeApi();
+    await cmds.quote([], api, {}, {
+      'from-chain': 'hyperliquid', 'to-chain': 'base',
+      'from-token': 'USDC', amount: '200000050', wallet: 'w',
+    });
+    expect(api.captured.params.amount).toBe('200000000');
+    // The persisted anchor that execute's amount checks compare against must be
+    // the floored value too, not the unfloored request.
+    const quotesDir = path.join(tmpHome, '.nansen', 'quotes');
+    const file = fs.readdirSync(quotesDir).find(f => f.startsWith('bridge-'));
+    const saved = JSON.parse(fs.readFileSync(path.join(quotesDir, file), 'utf8'));
+    expect(saved.requestedAmountBaseUnits).toBe('200000000');
+  });
+
+  it('leaves an already-6dp-aligned HL-origin base-units amount unchanged', async () => {
+    const cmds = buildBridgeCommands({ log: () => {} });
+    const api = fakeApi();
+    await cmds.quote([], api, {}, {
+      'from-chain': 'hyperliquid', 'to-chain': 'base',
+      'from-token': 'USDC', amount: '200000000', wallet: 'w',
+    });
+    expect(api.captured.params.amount).toBe('200000000');
+  });
+
+  // The floor changes what gets signed, so it must not be silent. Announce the
+  // before -> after adjustment on the default base-units path...
+  it('announces the floor on the default base-units path', async () => {
+    const msgs = [];
+    const cmds = buildBridgeCommands({ log: (m) => msgs.push(m) });
+    await cmds.quote([], fakeApi(), {}, {
+      'from-chain': 'hyperliquid', 'to-chain': 'base',
+      'from-token': 'USDC', amount: '200000050', wallet: 'w',
+    });
+    expect(msgs.some((m) => /floored 200000050 → 200000000 base units/.test(m))).toBe(true);
+  });
+
+  // ...and stay quiet when nothing was dropped, so aligned amounts don't emit a
+  // no-op notice.
+  it('emits no floor notice when the base-units amount is already aligned', async () => {
+    const msgs = [];
+    const cmds = buildBridgeCommands({ log: (m) => msgs.push(m) });
+    await cmds.quote([], fakeApi(), {}, {
+      'from-chain': 'hyperliquid', 'to-chain': 'base',
+      'from-token': 'USDC', amount: '200000000', wallet: 'w',
+    });
+    expect(msgs.some((m) => /floored/.test(m))).toBe(false);
+  });
+
+  // The second floor call site (the --amount-unit conversion path) announces too.
+  // 2.00000105 USDC at HL's 8 decimals is 200000105, floored to 200000100.
+  it('announces the floor on the --amount-unit token path', async () => {
+    const msgs = [];
+    const cmds = buildBridgeCommands({ log: (m) => msgs.push(m) });
+    const api = fakeApi();
+    await cmds.quote([], api, {}, {
+      'from-chain': 'hyperliquid', 'to-chain': 'base',
+      'from-token': 'USDC', amount: '2.00000105', 'amount-unit': 'token', wallet: 'w',
+    });
+    expect(api.captured.params.amount).toBe('200000100');
+    expect(msgs.some((m) => /floored 200000105 → 200000100 base units/.test(m))).toBe(true);
+  });
+
   it('rejects an unknown --amount-unit instead of silently using base units', async () => {
     const cmds = buildBridgeCommands({ log: () => {} });
     const api = fakeApi();

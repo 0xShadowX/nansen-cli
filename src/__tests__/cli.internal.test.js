@@ -15,6 +15,7 @@ import {
   formatCsv,
   parseSort,
   buildCommands,
+  prompt,
   runCLI,
   DEPRECATED_TO_RESEARCH,
   DEPRECATED_TO_TRADE,
@@ -37,10 +38,11 @@ import {
   buildAlertsCommands,
   validateAlertData,
 } from '../commands/alerts.js';
-import { getCachedResponse, setCachedResponse, clearCache, getCacheDir, NansenError, ErrorCode } from '../api.js';
+import { getCachedResponse, setCachedResponse, clearCache, getCacheDir, NansenError, ErrorCode, computeIdentityDigest } from '../api.js';
 import { EVM_CHAINS } from '../chain-ids.js';
 import * as fs from 'fs';
-import * as _path from 'path';
+import * as os from 'os';
+import * as path from 'path';
 
 describe('parseArgs', () => {
   it('should parse positional arguments', () => {
@@ -86,6 +88,58 @@ describe('parseArgs', () => {
     expect(result.flags.verbose).toBe(true);
     expect(result.flags.debug).toBe(true);
   });
+
+  it('should consume an explicit empty-string value instead of leaking it into positionals', () => {
+    const result = parseArgs(['--foo', '']);
+    expect(result.options.foo).toBe('');
+    expect(result.flags.foo).toBeUndefined();
+    expect(result._).toEqual([]);
+  });
+
+  it('should keep positionals intact when an option is given an empty-string value', () => {
+    const result = parseArgs(['web', 'fetch', 'https://nansen.ai', '--question', '']);
+    expect(result._).toEqual(['web', 'fetch', 'https://nansen.ai']);
+    expect(result.options.question).toBe('');
+    expect(result.flags.question).toBeUndefined();
+  });
+
+  it('should accumulate repeated empty-string option values', () => {
+    const result = parseArgs(['--token', '', '--token', '0xabc:base']);
+    expect(result.options.token).toEqual(['', '0xabc:base']);
+    expect(result._).toEqual([]);
+  });
+
+  it('should still treat a valueless flag followed by an empty string as boolean', () => {
+    const result = parseArgs(['--pretty', '']);
+    expect(result.flags.pretty).toBe(true);
+    expect(result.options.pretty).toBeUndefined();
+    expect(result._).toEqual(['']);
+  });
+
+  it('should keep boolean switches read only via flags out of options', () => {
+    // Handlers such as perp.js `flags.all` and trading.js `flags.gasless` never
+    // look at options, so a switch missing from VALUELESS_FLAGS would go dead
+    // the moment it is followed by any token.
+    for (const flag of ['all', 'max', 'gasless', 'auto-slippage', 'unsafe-no-password']) {
+      const empty = parseArgs([`--${flag}`, '']);
+      expect(empty.flags[flag]).toBe(true);
+      expect(empty.options[flag]).toBeUndefined();
+
+      const positional = parseArgs([`--${flag}`, 'BTC']);
+      expect(positional.flags[flag]).toBe(true);
+      expect(positional.options[flag]).toBeUndefined();
+      expect(positional._).toEqual(['BTC']);
+    }
+  });
+
+  it('should not swallow a following positional arg as the value of a trade execute boolean flag', () => {
+    for (const flag of ['no-simulate', 'no-verify-outcome', 'no-revoke-excessive-allowance']) {
+      const result = parseArgs(['trade', 'execute', `--${flag}`, '1708900000000-abc123']);
+      expect(result.flags[flag]).toBe(true);
+      expect(result.options[flag]).toBeUndefined();
+      expect(result._).toEqual(['trade', 'execute', '1708900000000-abc123']);
+    }
+  });
 });
 
 describe('formatValue', () => {
@@ -102,6 +156,12 @@ describe('formatValue', () => {
   it('should format thousands with K suffix', () => {
     expect(formatValue(5000)).toBe('5.00K');
     expect(formatValue(-1500)).toBe('-1.50K');
+  });
+  it('should promote K to M at the rounding boundary', () => {
+    expect(formatValue(999990)).toBe('999.99K');
+    expect(formatValue(999999.995)).toBe('1.00M');
+    expect(formatValue(999999.999)).toBe('1.00M');
+    expect(formatValue(-999999.995)).toBe('-1.00M');
   });
 
   it('should format integers without decimals', () => {
@@ -185,6 +245,26 @@ describe('formatTable', () => {
     const header = lines[0];
     // token_symbol should come before zebra (priority field)
     expect(header.indexOf('token_symbol')).toBeLessThan(header.indexOf('zebra'));
+  });
+
+  it('should keep wallet_address when a batch row exceeds the column limit', () => {
+    // A batch counterparties row has 9 keys; without priority, wallet_address
+    // sorts last alphabetically and is cut by the 8-column limit — losing the
+    // key that says which input wallet the row belongs to.
+    const data = [{
+      counterparty_address: '0xcp',
+      counterparty_address_label: ['Exchange'],
+      interaction_count: 12,
+      total_volume_usd: 1000,
+      volume_in_usd: 600,
+      volume_out_usd: 400,
+      tokens_info: [],
+      wallet_address: '0xwallet',
+      chain: 'ethereum'
+    }];
+    const header = formatTable(data).split('\n')[0];
+    expect(header).toContain('wallet_address');
+    expect(header.indexOf('wallet_address')).toBeLessThan(header.indexOf('counterparty_address'));
   });
 });
 
@@ -738,6 +818,20 @@ describe('alerts list — client-side filtering', () => {
     expect(result[0].id).toBe('4');
   });
 
+  it('should reject a non-string --token-address instead of crashing on .toLowerCase()', async () => {
+    const { mockApi, cmd } = setup();
+    await expect(cmd(['list'], mockApi, {}, { 'token-address': true }))
+      .rejects.toThrow('--token-address must be a string');
+    expect(mockApi.alertsList).not.toHaveBeenCalled();
+  });
+
+  it('should reject a non-string --chain instead of crashing on .toLowerCase()', async () => {
+    const { mockApi, cmd } = setup();
+    await expect(cmd(['list'], mockApi, {}, { chain: false }))
+      .rejects.toThrow('--chain must be a string');
+    expect(mockApi.alertsList).not.toHaveBeenCalled();
+  });
+
   it('should apply --limit', async () => {
     const { mockApi, cmd } = setup();
     const result = await cmd(['list'], mockApi, {}, { limit: 2 });
@@ -758,6 +852,53 @@ describe('alerts list — client-side filtering', () => {
     expect(result).toHaveLength(2);
     expect(result[0].id).toBe('2');
     expect(result[1].id).toBe('3');
+  });
+
+  it('should honor --limit 0 (return zero results) instead of treating it as unset', async () => {
+    const { mockApi, cmd } = setup();
+    const result = await cmd(['list'], mockApi, {}, { limit: 0 });
+    expect(result).toHaveLength(0);
+  });
+
+  it('should honor --offset 0 (a no-op, not "unset") without erroring', async () => {
+    const { mockApi, cmd } = setup();
+    const result = await cmd(['list'], mockApi, {}, { offset: 0 });
+    expect(result).toHaveLength(5);
+  });
+
+  it('should reject a non-numeric --limit instead of silently returning zero results', async () => {
+    const { mockApi, cmd } = setup();
+    await expect(cmd(['list'], mockApi, {}, { limit: 'abc' }))
+      .rejects.toThrow('--limit must be a non-negative integer');
+    expect(mockApi.alertsList).not.toHaveBeenCalled();
+  });
+
+  it('should reject a non-numeric --offset instead of silently no-op-ing', async () => {
+    const { mockApi, cmd } = setup();
+    await expect(cmd(['list'], mockApi, {}, { offset: 'abc' }))
+      .rejects.toThrow('--offset must be a non-negative integer');
+    expect(mockApi.alertsList).not.toHaveBeenCalled();
+  });
+
+  it('should reject a negative --limit', async () => {
+    const { mockApi, cmd } = setup();
+    await expect(cmd(['list'], mockApi, {}, { limit: -1 }))
+      .rejects.toThrow('--limit must be a non-negative integer');
+    expect(mockApi.alertsList).not.toHaveBeenCalled();
+  });
+
+  it('should reject a negative --offset instead of silently slicing from the end', async () => {
+    const { mockApi, cmd } = setup();
+    await expect(cmd(['list'], mockApi, {}, { offset: -1 }))
+      .rejects.toThrow('--offset must be a non-negative integer');
+    expect(mockApi.alertsList).not.toHaveBeenCalled();
+  });
+
+  it('should reject a non-integer --limit (e.g. "2.5")', async () => {
+    const { mockApi, cmd } = setup();
+    await expect(cmd(['list'], mockApi, {}, { limit: '2.5' }))
+      .rejects.toThrow('--limit must be a non-negative integer');
+    expect(mockApi.alertsList).not.toHaveBeenCalled();
   });
 
   it('should combine type + chain filters', async () => {
@@ -1762,6 +1903,53 @@ describe('HELP', () => {
   });
 });
 
+describe('prompt', () => {
+  it('keeps hidden input masked when stdout is redirected', async () => {
+    let onData;
+    const input = {
+      isTTY: true,
+      setRawMode: vi.fn(),
+      resume: vi.fn(),
+      pause: vi.fn(),
+      setEncoding: vi.fn(),
+      on: vi.fn((_event, handler) => { onData = handler; }),
+      removeListener: vi.fn(),
+    };
+    const output = { isTTY: false, write: vi.fn() };
+    const secret = 'REDIRECTED_OUTPUT_TEST_KEY';
+
+    const result = prompt('Enter key: ', true, { input, output });
+    onData(secret);
+    onData('\n');
+
+    await expect(result).resolves.toBe(secret);
+    expect(input.setRawMode.mock.calls).toEqual([[true], [false]]);
+    expect(output.write.mock.calls.flat().join('')).not.toContain(secret);
+  });
+
+  it('defaults masked output to stderr, never a redirected stdout', async () => {
+    let onData;
+    const input = {
+      isTTY: true,
+      setRawMode: vi.fn(), resume: vi.fn(), pause: vi.fn(), setEncoding: vi.fn(),
+      on: vi.fn((_e, h) => { onData = h; }), removeListener: vi.fn(),
+    };
+    const errSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    const outSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    try {
+      const result = prompt('Enter key: ', true, { input });   // no output → default stderr
+      onData('K'); onData('\n');
+      await expect(result).resolves.toBe('K');
+      // Prompt + mask went to stderr; stdout (which a user may redirect) untouched.
+      expect(errSpy.mock.calls.flat().join('')).toContain('*');
+      expect(outSpy).not.toHaveBeenCalled();
+    } finally {
+      errSpy.mockRestore();
+      outSpy.mockRestore();
+    }
+  });
+});
+
 describe('buildCommands', () => {
   let mockDeps;
   let commands;
@@ -1836,6 +2024,67 @@ describe('buildCommands', () => {
       } finally {
         if (savedEnv !== undefined) process.env.NANSEN_API_KEY = savedEnv;
       }
+    });
+
+    it('does not relay verification error text', async () => {
+      const key = 'VERIFICATION_TEST_KEY';
+      const encodedKey = Buffer.from(key).toString('base64');
+      const mockApi = { getAccount: vi.fn().mockRejectedValue(
+        Object.assign(new Error(`upstream echoed ${key} and ${encodedKey}`), { code: 'SOMETHING_ELSE' })
+      ) };
+      mockDeps.NansenAPIClass.mockImplementation(function() { return mockApi; });
+
+      const thrown = await commands.login([], null, {}, { 'api-key': key }).catch(e => e);
+
+      expect(thrown.message).toBe('Could not verify API key.');
+      expect(thrown.message).not.toContain(key);
+      expect(JSON.stringify(thrown.data ?? {})).not.toContain(encodedKey);
+    });
+
+    it('restores signal from the structured code without relaying the message', async () => {
+      const key = 'RATE_LIMIT_TEST_KEY';
+      const mockApi = { getAccount: vi.fn().mockRejectedValue(
+        // A transient rate-limit whose message still echoes the key: the branch
+        // must key off error.code, never interpolate the message.
+        Object.assign(new Error(`429 for ${key}`), { code: ErrorCode.RATE_LIMITED })
+      ) };
+      mockDeps.NansenAPIClass.mockImplementation(function() { return mockApi; });
+
+      const thrown = await commands.login([], null, {}, { 'api-key': key }).catch(e => e);
+
+      expect(thrown.code).toBe('VERIFICATION_FAILED');
+      expect(thrown.message).toMatch(/rate limited/i);
+      expect(thrown.message).not.toBe('Could not verify API key.'); // not the misleading generic
+      expect(JSON.stringify(thrown.data ?? {})).not.toContain(key);   // no message relay
+    });
+
+    it('invalid-key resolution points at the key management view, never agent-setup', async () => {
+      const mockApi = { getAccount: vi.fn().mockRejectedValue(
+        Object.assign(new Error('unauthorized'), { code: ErrorCode.UNAUTHORIZED })
+      ) };
+      mockDeps.NansenAPIClass.mockImplementation(function() { return mockApi; });
+
+      let thrown;
+      try {
+        await commands.login([], null, {}, { 'api-key': 'some-invalid-key' });
+      } catch (e) { thrown = e; }
+      expect(thrown).toBeDefined();
+      const resolution = JSON.stringify(thrown.data?.resolution ?? []);
+      expect(resolution).toContain('https://app.nansen.ai/api?tab=api');
+      expect(resolution).not.toContain('/auth/agent-setup');
+    });
+
+    it('login help warns that literal keys land in shell history', async () => {
+      const logs = [];
+      const localCommands = buildCommands({ ...mockDeps, log: (m) => logs.push(m) });
+      await localCommands.login([], null, { help: true }, {});
+      const out = logs.join('\n');
+      expect(out).toContain('--human');
+      expect(out).toContain('uses NANSEN_API_KEY when already set');
+      expect(out).not.toContain('security find-generic-password');
+      expect(out).toMatch(/recorded in shell history/i);
+      // the safe path is listed before the history-recording one
+      expect(out.indexOf('--human')).toBeLessThan(out.indexOf('--api-key <key>'));
     });
 
     it('should save config with --api-key option after verification', async () => {
@@ -2538,6 +2787,120 @@ describe('--no-retry and --retries flags', () => {
     
     expect(capturedOptions.retry.maxRetries).toBe(0);
   });
+
+  it.each(['-1', '1.5', 'NaN', 'Infinity', '9007199254740992'])(
+    'should reject invalid --retries value %s before constructing the API client',
+    async (value) => {
+      const NansenAPIClass = vi.fn();
+
+      const result = await runCLI(
+        ['smart-money', 'netflow', '--retries', value],
+        { ...mockDeps(), NansenAPIClass },
+      );
+
+      expect(result).toMatchObject({
+        type: 'error',
+        data: {
+          error: `--retries must be a non-negative safe integer; received: ${value}`,
+          code: ErrorCode.INVALID_PARAMS,
+        },
+      });
+      expect(NansenAPIClass).not.toHaveBeenCalled();
+      expect(_exitCode).toBe(1);
+    },
+  );
+
+  it('should reject --retries without a value before constructing the API client', async () => {
+    const NansenAPIClass = vi.fn();
+
+    const result = await runCLI(
+      ['smart-money', 'netflow', '--retries'],
+      { ...mockDeps(), NansenAPIClass },
+    );
+
+    expect(result.data.error).toBe('--retries requires a non-negative safe integer value');
+    expect(result.data.code).toBe(ErrorCode.INVALID_PARAMS);
+    expect(NansenAPIClass).not.toHaveBeenCalled();
+    expect(_exitCode).toBe(1);
+  });
+
+  it.each([
+    ['--retries', '2', '--retries'],
+    ['--retries', '--retries', '2'],
+  ])('should reject a valueless repeated --retries occurrence: %s %s %s', async (...retryArgs) => {
+    const NansenAPIClass = vi.fn();
+
+    const result = await runCLI(
+      ['smart-money', 'netflow', ...retryArgs],
+      { ...mockDeps(), NansenAPIClass },
+    );
+
+    expect(result.data.error).toBe('--retries requires a non-negative safe integer value');
+    expect(result.data.code).toBe(ErrorCode.INVALID_PARAMS);
+    expect(NansenAPIClass).not.toHaveBeenCalled();
+  });
+
+  it('should reject repeated valued --retries options clearly', async () => {
+    const NansenAPIClass = vi.fn();
+
+    const result = await runCLI(
+      ['smart-money', 'netflow', '--retries', '2', '--retries', '3'],
+      { ...mockDeps(), NansenAPIClass },
+    );
+
+    expect(result.data.error).toBe('--retries may only be specified once');
+    expect(result.data.code).toBe(ErrorCode.INVALID_PARAMS);
+    expect(NansenAPIClass).not.toHaveBeenCalled();
+  });
+
+  it.each(['', '   '])('should reject empty --retries value %#', async (value) => {
+    const NansenAPIClass = vi.fn();
+
+    const result = await runCLI(
+      ['smart-money', 'netflow', '--retries', value],
+      { ...mockDeps(), NansenAPIClass },
+    );
+
+    expect(result.data.error).toBe('--retries requires a non-negative safe integer value');
+    expect(result.data.code).toBe(ErrorCode.INVALID_PARAMS);
+    expect(NansenAPIClass).not.toHaveBeenCalled();
+  });
+
+  it('should validate --retries even when --no-retry overrides it', async () => {
+    const NansenAPIClass = vi.fn();
+
+    const result = await runCLI(
+      ['smart-money', 'netflow', '--no-retry', '--retries', '-1'],
+      { ...mockDeps(), NansenAPIClass },
+    );
+
+    expect(result.data.error).toBe('--retries must be a non-negative safe integer; received: -1');
+    expect(result.data.code).toBe(ErrorCode.INVALID_PARAMS);
+    expect(NansenAPIClass).not.toHaveBeenCalled();
+  });
+
+  it('should allow the largest safe integer for --retries', async () => {
+    let capturedOptions;
+    const deps = {
+      ...mockDeps(),
+      NansenAPIClass: function MockAPI(key, url, opts) {
+        capturedOptions = opts;
+        this.smartMoneyNetflow = vi.fn().mockResolvedValue({ data: [] });
+      },
+    };
+
+    await runCLI(['smart-money', 'netflow', '--retries', '9007199254740991'], deps);
+
+    expect(capturedOptions.retry.maxRetries).toBe(Number.MAX_SAFE_INTEGER);
+  });
+
+  it('should describe retry numeric boundaries in the schema', () => {
+    expect(SCHEMA.globalOptions.retries).toMatchObject({
+      type: 'integer',
+      minimum: 0,
+      maximum: Number.MAX_SAFE_INTEGER,
+    });
+  });
 });
 
 // =================== P2: parseSort with Special Characters ===================
@@ -2843,6 +3206,40 @@ describe('SCHEMA', () => {
     expect(trades.options.address.required).toBe(true);
   });
 
+  it('splits --tags CSV into an array for market-screener', async () => {
+    const mockApi = { pmMarketScreener: vi.fn().mockResolvedValue({ markets: [] }) };
+    const commands = buildCommands({});
+    await commands['prediction-market'](['market-screener'], mockApi, {}, { tags: 'defi,nft' });
+    expect(mockApi.pmMarketScreener).toHaveBeenCalledWith(expect.objectContaining({
+      tags: ['defi', 'nft'],
+    }));
+  });
+
+  it('rejects non-string --tags (JSON-primitive) with INVALID_PARAMS instead of crashing', async () => {
+    const mockApi = { pmMarketScreener: vi.fn().mockResolvedValue({ markets: [] }) };
+    const commands = buildCommands({});
+    await expect(
+      commands['prediction-market'](['market-screener'], mockApi, {}, { tags: true })
+    ).rejects.toMatchObject({ code: ErrorCode.INVALID_PARAMS });
+  });
+
+  it('accepts a repeated --tags flag (parseArgs array) instead of rejecting it as non-string', async () => {
+    const mockApi = { pmMarketScreener: vi.fn().mockResolvedValue({ markets: [] }) };
+    const commands = buildCommands({});
+    await commands['prediction-market'](['market-screener'], mockApi, {}, { tags: ['defi', 'nft'] });
+    expect(mockApi.pmMarketScreener).toHaveBeenCalledWith(expect.objectContaining({
+      tags: ['defi', 'nft'],
+    }));
+  });
+
+  it('rejects a non-string element in a repeated --tags flag', async () => {
+    const mockApi = { pmMarketScreener: vi.fn().mockResolvedValue({ markets: [] }) };
+    const commands = buildCommands({});
+    await expect(
+      commands['prediction-market'](['market-screener'], mockApi, {}, { tags: ['defi', true] })
+    ).rejects.toMatchObject({ code: ErrorCode.INVALID_PARAMS });
+  });
+
   // Note: returns removed in minimal schema (skills document output fields)
 
   it('should include option defaults', () => {
@@ -2971,6 +3368,21 @@ describe('parseFields', () => {
   it('should handle single field', () => {
     const result = parseFields('address');
     expect(result).toEqual(['address']);
+  });
+
+  it('rejects a non-string value (JSON-primitive) with INVALID_PARAMS instead of crashing', () => {
+    expect(() => parseFields(true)).toThrowError(
+      expect.objectContaining({ code: ErrorCode.INVALID_PARAMS })
+    );
+  });
+
+  it('rejects falsy non-string values (--fields false / --fields null) instead of silently returning null', () => {
+    expect(() => parseFields(false)).toThrowError(
+      expect.objectContaining({ code: ErrorCode.INVALID_PARAMS })
+    );
+    expect(() => parseFields(null)).toThrowError(
+      expect.objectContaining({ code: ErrorCode.INVALID_PARAMS })
+    );
   });
 });
 
@@ -3209,6 +3621,143 @@ describe('Response Caching', () => {
   });
 });
 
+describe('cache isolation by request context', () => {
+  afterEach(() => {
+    clearCache();
+  });
+
+  const endpoint = '/api/v1/some/endpoint';
+  const body = { foo: 'bar' };
+
+  const contextA = {
+    baseUrl: 'https://a.example',
+    method: 'POST',
+    identity: 'identity-a',
+  };
+  const contextB = {
+    baseUrl: 'https://b.example',
+    method: 'POST',
+    identity: 'identity-b',
+  };
+
+  it('does not serve one identity\'s cached response to another', () => {
+    setCachedResponse(endpoint, body, { secret: 'A' }, contextA);
+
+    expect(getCachedResponse(endpoint, body, 300, contextB)).toBeNull();
+
+    const hit = getCachedResponse(endpoint, body, 300, contextA);
+    expect(hit.secret).toBe('A');
+  });
+
+  it('treats a different base URL as a different cache entry', () => {
+    setCachedResponse(endpoint, body, { origin: 'A' }, contextA);
+    const differentOrigin = { ...contextA, baseUrl: 'https://other.example' };
+    expect(getCachedResponse(endpoint, body, 300, differentOrigin)).toBeNull();
+  });
+
+  it('treats a different HTTP method as a different cache entry', () => {
+    setCachedResponse(endpoint, body, { m: 'POST' }, contextA);
+    const differentMethod = { ...contextA, method: 'GET' };
+    expect(getCachedResponse(endpoint, body, 300, differentMethod)).toBeNull();
+  });
+});
+
+describe('computeIdentityDigest', () => {
+  it('returns distinct digests for distinct API keys', () => {
+    const a = computeIdentityDigest('key-a');
+    const b = computeIdentityDigest('key-b');
+    expect(a).not.toBe(b);
+  });
+
+  it('returns the same digest for the same API key (deterministic)', () => {
+    expect(computeIdentityDigest('key-x')).toBe(computeIdentityDigest('key-x'));
+  });
+
+  it('ignores auth header insertion order', () => {
+    const first = computeIdentityDigest(null, {
+      apikey: 'key-x',
+      authorization: 'Bearer token',
+      'payment-signature': 'signature',
+    });
+    const second = computeIdentityDigest(null, {
+      'payment-signature': 'signature',
+      authorization: 'Bearer token',
+      apikey: 'key-x',
+    });
+    expect(first).toBe(second);
+  });
+
+  it('returns distinct digests for distinct auth headers', () => {
+    const a = computeIdentityDigest(null, { apikey: 'hdr-a' });
+    const b = computeIdentityDigest(null, { apikey: 'hdr-b' });
+    expect(a).not.toBe(b);
+  });
+
+  it('does not include the raw API key in the digest string', () => {
+    const digest = computeIdentityDigest('super-secret-key');
+    expect(digest).not.toContain('super-secret-key');
+  });
+});
+
+// compareSemver's own unit tests live in src/__tests__/semver.test.js
+// (its canonical home, src/semver.js). What belongs here is the CLI
+// command's behavior — that --since is validated and filters correctly —
+// not a re-test of the comparison function's arithmetic.
+describe('changelog command --since', () => {
+  function runChangelog(options) {
+    const logs = [];
+    const commands = buildCommands({ log: (m) => logs.push(m), exit: vi.fn() });
+    return commands.changelog([], null, {}, options).then(() => logs.join('\n'));
+  }
+
+  it('rejects a non-numeric --since value with a clear error instead of silently matching nothing', async () => {
+    const out = await runChangelog({ since: 'abc' });
+    expect(out).toBe('Invalid --since value "abc": expected a version like 1.43 or 1.43.0.');
+  });
+
+  it('rejects a malformed --since value like "1.2.3.4"', async () => {
+    const out = await runChangelog({ since: '1.2.3.4' });
+    expect(out).toContain('Invalid --since value "1.2.3.4"');
+  });
+
+  it('a --since value missing the patch component reads as .0, not as always-less-than-everything (regression for the "1.43 vs 1.43.1" bug)', async () => {
+    // Read the real CHANGELOG.md the command itself reads, and use whatever
+    // its current newest version's major.minor happens to be, so this
+    // doesn't hardcode a version number that goes stale as new releases
+    // land. The exact patch number doesn't matter here — only that a
+    // major.minor-only --since behaves like its explicit ".0" form.
+    const changelogPath = new URL('../../CHANGELOG.md', import.meta.url).pathname;
+    const content = fs.readFileSync(changelogPath, 'utf8');
+    const headingMatch = content.match(/^## \[?(\d+\.\d+)\.\d+\]?/m);
+    expect(headingMatch).not.toBeNull();
+    const [, majorMinor] = headingMatch;
+
+    const explicitZeroForm = await runChangelog({ since: `${majorMinor}.0` });
+    const partialForm = await runChangelog({ since: majorMinor });
+
+    // Before the fix this always fell through to the "No changelog entries
+    // found" message, because compareSemver compared the real patch number
+    // against `undefined` and that is never >= 0 in either direction — so a
+    // major.minor-only --since matched nothing, even entries for that exact
+    // major.minor.
+    //
+    // Assert on structure (the newest version's heading is present) rather
+    // than on the absence of the no-match sentinel string: a real changelog
+    // entry's prose can legitimately quote "No changelog entries found"
+    // (e.g. the entry that documents this very fix), so checking for that
+    // substring is a false positive waiting to happen. The heading only
+    // appears when entries were actually included, and the no-match message
+    // is a single line with no "## " heading.
+    expect(partialForm).toContain(`## ${majorMinor}.`);
+    expect(partialForm).toBe(explicitZeroForm);
+  });
+
+  it('a --since value far in the future still reports the no-match message clearly (not an error)', async () => {
+    const out = await runChangelog({ since: '9999.0.0' });
+    expect(out).toBe('No changelog entries found for versions >= 9999.0.0');
+  });
+});
+
 describe('cache command', () => {
   it('should clear cache with clear subcommand', async () => {
     const logs = [];
@@ -3289,6 +3838,135 @@ describe('--cache flag integration', () => {
     await runCLI(['smart-money', 'netflow', '--cache', '--cache-ttl', '60'], deps);
     
     expect(capturedOptions.cache.ttl).toBe(60);
+  });
+
+  it.each(['-1', '1.5', 'NaN', 'Infinity', '9007199254740992'])(
+    'should reject invalid --cache-ttl value %s before constructing the API client',
+    async (value) => {
+      const NansenAPIClass = vi.fn();
+
+      const result = await runCLI(
+        ['smart-money', 'netflow', '--cache', '--cache-ttl', value],
+        { ...mockDeps(), NansenAPIClass },
+      );
+
+      expect(result).toMatchObject({
+        type: 'error',
+        data: {
+          error: `--cache-ttl must be a non-negative safe integer; received: ${value}`,
+          code: ErrorCode.INVALID_PARAMS,
+        },
+      });
+      expect(NansenAPIClass).not.toHaveBeenCalled();
+      expect(_exitCode).toBe(1);
+    },
+  );
+
+  it('should reject --cache-ttl without a value before constructing the API client', async () => {
+    const NansenAPIClass = vi.fn();
+
+    const result = await runCLI(
+      ['smart-money', 'netflow', '--cache', '--cache-ttl'],
+      { ...mockDeps(), NansenAPIClass },
+    );
+
+    expect(result.data.error).toBe('--cache-ttl requires a non-negative safe integer value');
+    expect(result.data.code).toBe(ErrorCode.INVALID_PARAMS);
+    expect(NansenAPIClass).not.toHaveBeenCalled();
+    expect(_exitCode).toBe(1);
+  });
+
+  it.each([
+    ['--cache-ttl', '60', '--cache-ttl'],
+    ['--cache-ttl', '--cache-ttl', '60'],
+  ])('should reject a valueless repeated --cache-ttl occurrence: %s %s %s', async (...ttlArgs) => {
+    const NansenAPIClass = vi.fn();
+
+    const result = await runCLI(
+      ['smart-money', 'netflow', '--cache', ...ttlArgs],
+      { ...mockDeps(), NansenAPIClass },
+    );
+
+    expect(result.data.error).toBe('--cache-ttl requires a non-negative safe integer value');
+    expect(result.data.code).toBe(ErrorCode.INVALID_PARAMS);
+    expect(NansenAPIClass).not.toHaveBeenCalled();
+  });
+
+  it('should reject repeated valued --cache-ttl options clearly', async () => {
+    const NansenAPIClass = vi.fn();
+
+    const result = await runCLI(
+      ['smart-money', 'netflow', '--cache', '--cache-ttl', '60', '--cache-ttl', '120'],
+      { ...mockDeps(), NansenAPIClass },
+    );
+
+    expect(result.data.error).toBe('--cache-ttl may only be specified once');
+    expect(result.data.code).toBe(ErrorCode.INVALID_PARAMS);
+    expect(NansenAPIClass).not.toHaveBeenCalled();
+  });
+
+  it.each(['', '   '])('should reject empty --cache-ttl value %#', async (value) => {
+    const NansenAPIClass = vi.fn();
+
+    const result = await runCLI(
+      ['smart-money', 'netflow', '--cache', '--cache-ttl', value],
+      { ...mockDeps(), NansenAPIClass },
+    );
+
+    expect(result.data.error).toBe('--cache-ttl requires a non-negative safe integer value');
+    expect(result.data.code).toBe(ErrorCode.INVALID_PARAMS);
+    expect(NansenAPIClass).not.toHaveBeenCalled();
+  });
+
+  it('should validate --cache-ttl even when cache is not enabled', async () => {
+    const NansenAPIClass = vi.fn();
+
+    const result = await runCLI(
+      ['smart-money', 'netflow', '--cache-ttl', 'Infinity'],
+      { ...mockDeps(), NansenAPIClass },
+    );
+
+    expect(result.data.code).toBe(ErrorCode.INVALID_PARAMS);
+    expect(NansenAPIClass).not.toHaveBeenCalled();
+  });
+
+  it('should validate --cache-ttl even when --no-cache overrides it', async () => {
+    const NansenAPIClass = vi.fn();
+
+    const result = await runCLI(
+      ['smart-money', 'netflow', '--no-cache', '--cache-ttl', '-1'],
+      { ...mockDeps(), NansenAPIClass },
+    );
+
+    expect(result.data.error).toBe('--cache-ttl must be a non-negative safe integer; received: -1');
+    expect(result.data.code).toBe(ErrorCode.INVALID_PARAMS);
+    expect(NansenAPIClass).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['0', 0],
+    ['9007199254740991', Number.MAX_SAFE_INTEGER],
+  ])('should allow --cache-ttl boundary value %s', async (value, expected) => {
+    let capturedOptions;
+    const deps = {
+      ...mockDeps(),
+      NansenAPIClass: function MockAPI(key, url, opts) {
+        capturedOptions = opts;
+        this.smartMoneyNetflow = vi.fn().mockResolvedValue({ data: [] });
+      },
+    };
+
+    await runCLI(['smart-money', 'netflow', '--cache', '--cache-ttl', value], deps);
+
+    expect(capturedOptions.cache.ttl).toBe(expected);
+  });
+
+  it('should describe cache TTL numeric boundaries in the schema', () => {
+    expect(SCHEMA.globalOptions['cache-ttl']).toMatchObject({
+      type: 'integer',
+      minimum: 0,
+      maximum: Number.MAX_SAFE_INTEGER,
+    });
   });
 
   it('should not enable cache by default', async () => {
@@ -3565,6 +4243,51 @@ describe('profiler batch command', () => {
     const result = await commands['profiler'](['help'], null, {}, {});
     expect(result.commands).toContain('batch');
   });
+
+  it('rejects non-string --include (JSON-primitive) with INVALID_PARAMS instead of crashing', async () => {
+    const mockApi = {
+      addressLabels: vi.fn().mockResolvedValue({ labels: [] }),
+      addressBalance: vi.fn().mockResolvedValue({ balances: [] }),
+    };
+    const commands = buildCommands({});
+    await expect(
+      commands['profiler'](['batch'], mockApi, {}, {
+        addresses: '0x0000000000000000000000000000000000000001',
+        include: true,
+        delay: '0'
+      })
+    ).rejects.toMatchObject({ code: ErrorCode.INVALID_PARAMS });
+  });
+
+  it('falls back to the default include (labels,balance) for an empty --include, not an empty set', async () => {
+    const mockApi = {
+      addressLabels: vi.fn().mockResolvedValue({ labels: [] }),
+      addressBalance: vi.fn().mockResolvedValue({ balances: [] }),
+    };
+    const commands = buildCommands({});
+    await commands['profiler'](['batch'], mockApi, {}, {
+      addresses: '0x0000000000000000000000000000000000000001',
+      include: '',
+      delay: '0'
+    });
+    expect(mockApi.addressLabels).toHaveBeenCalled();
+    expect(mockApi.addressBalance).toHaveBeenCalled();
+  });
+
+  it('falls back to the default include for an all-commas --include (splits to blank tokens)', async () => {
+    const mockApi = {
+      addressLabels: vi.fn().mockResolvedValue({ labels: [] }),
+      addressBalance: vi.fn().mockResolvedValue({ balances: [] }),
+    };
+    const commands = buildCommands({});
+    await commands['profiler'](['batch'], mockApi, {}, {
+      addresses: '0x0000000000000000000000000000000000000001',
+      include: ',,',
+      delay: '0'
+    });
+    expect(mockApi.addressLabels).toHaveBeenCalled();
+    expect(mockApi.addressBalance).toHaveBeenCalled();
+  });
 });
 
 // =================== profiler trace ===================
@@ -3653,6 +4376,112 @@ describe('profiler compare command', () => {
     const commands = buildCommands({});
     const result = await commands['profiler'](['help'], null, {}, {});
     expect(result.commands).toContain('compare');
+  });
+});
+
+// =================== profiler counterparties-batch ===================
+
+describe('profiler counterparties-batch command', () => {
+  const ADDR_A = '0x0000000000000000000000000000000000000001';
+  const ADDR_B = '0x0000000000000000000000000000000000000002';
+
+  function mockBatchApi() {
+    return { addressCounterpartiesBatch: vi.fn().mockResolvedValue({ pagination: {}, data: [] }) };
+  }
+
+  it('should appear in SCHEMA', () => {
+    const batch = SCHEMA.commands.research.subcommands['profiler'].subcommands['counterparties-batch'];
+    expect(batch).toBeDefined();
+    expect(batch.endpoint).toBe('/api/v1/profiler/address/counterparties/batch');
+    expect(batch.options.addresses.required).toBeUndefined();
+    expect(batch.options.addresses.description).toContain('--file <path>');
+    expect(batch.options.days.default).toBe(30);
+    // The dispatch default is 'all', so the schema must document that, not 'ethereum'
+    expect(batch.options.chain.default).toBe('all');
+  });
+
+  it('should pass comma-separated --addresses through to the batch method', async () => {
+    const mockApi = mockBatchApi();
+    const commands = buildCommands({});
+    await commands['profiler'](['counterparties-batch'], mockApi, {}, {
+      addresses: `${ADDR_A}, ${ADDR_B}`,
+      chain: 'ethereum',
+      days: '7',
+      page: '1',
+      limit: '2'
+    });
+
+    expect(mockApi.addressCounterpartiesBatch).toHaveBeenCalledWith(expect.objectContaining({
+      addresses: [ADDR_A, ADDR_B],
+      chain: 'ethereum',
+      days: 7,
+      pagination: { page: 1, per_page: 2 }
+    }));
+  });
+
+  it('should send chain "all" when --chain is omitted', async () => {
+    const mockApi = mockBatchApi();
+    const commands = buildCommands({});
+    await commands['profiler'](['counterparties-batch'], mockApi, {}, { addresses: ADDR_A });
+
+    expect(mockApi.addressCounterpartiesBatch).toHaveBeenCalledWith(expect.objectContaining({
+      addresses: [ADDR_A],
+      chain: 'all'
+    }));
+  });
+
+  it('should read addresses from --file', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nansen-cli-test-'));
+    const file = path.join(dir, 'addresses.txt');
+    fs.writeFileSync(file, `${ADDR_A}\n${ADDR_B}\n`);
+
+    try {
+      const mockApi = mockBatchApi();
+      const commands = buildCommands({});
+      await commands['profiler'](['counterparties-batch'], mockApi, {}, { file, chain: 'ethereum' });
+
+      expect(mockApi.addressCounterpartiesBatch).toHaveBeenCalledWith(expect.objectContaining({
+        addresses: [ADDR_A, ADDR_B]
+      }));
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('should return the response unchanged so rows keep their wallet_address', async () => {
+    const response = {
+      pagination: { page: 1, per_page: 2, total_pages: 1 },
+      data: [
+        { wallet_address: ADDR_A, counterparty_address: '0xaaa', chain: 'ethereum', interaction_count: 3 },
+        { wallet_address: ADDR_B, counterparty_address: '0xbbb', chain: 'ethereum', interaction_count: 1 }
+      ]
+    };
+    const mockApi = {
+      addressCounterpartiesBatch: vi.fn().mockResolvedValue(response),
+    };
+    const commands = buildCommands({});
+    const result = await commands['profiler'](['counterparties-batch'], mockApi, {}, {
+      addresses: `${ADDR_A},${ADDR_B}`,
+      chain: 'ethereum'
+    });
+
+    expect(result).toEqual(response);
+    expect(result.data.map(row => row.wallet_address)).toEqual([ADDR_A, ADDR_B]);
+  });
+
+  it('should raise an actionable error when --file does not exist', async () => {
+    const missing = path.join(os.tmpdir(), 'nansen-cli-test-missing-addresses.txt');
+    const commands = buildCommands({});
+
+    await expect(
+      commands['profiler'](['counterparties-batch'], mockBatchApi(), {}, { file: missing })
+    ).rejects.toThrow(/Could not read --file .*: no such file/);
+  });
+
+  it('should be listed in profiler help', async () => {
+    const commands = buildCommands({});
+    const result = await commands['profiler'](['help'], null, {}, {});
+    expect(result.commands).toContain('counterparties-batch');
   });
 });
 
@@ -3829,6 +4658,25 @@ describe('--enrich flag on token transfers', () => {
     expect(result.transfers[0].to_labels).toEqual(['Smart Trader']);
   });
 
+  it('should enrich transfers from the v1 labels response shape', async () => {
+    const mockApi = {
+      tokenTransfers: vi.fn().mockResolvedValue({
+        transfers: [
+          { from: '0xaaa', to: '0xbbb', amount_usd: 1000 }
+        ]
+      }),
+      addressLabels: vi.fn().mockResolvedValue({
+        pagination: { page: 1, per_page: 100, total: 1 },
+        data: [{ label: 'Smart Trader', category: 'behavioral' }]
+      })
+    };
+    const commands = buildCommands({});
+    const result = await commands['token'](['transfers'], mockApi, { enrich: true }, { token: '0xabc' });
+
+    expect(result.transfers[0].from_labels).toEqual(['Smart Trader']);
+    expect(result.transfers[0].to_labels).toEqual(['Smart Trader']);
+  });
+
   it('should not enrich when --enrich flag is not set', async () => {
     const mockApi = {
       tokenTransfers: vi.fn().mockResolvedValue({
@@ -3954,6 +4802,26 @@ describe('batchProfile', () => {
     expect(result.results).toHaveLength(2);
     expect(result.results[0].labels).toBeDefined();
     expect(result.results[0].balance).toBeDefined();
+  });
+
+  it('should unwrap the v1 labels response into a labels array', async () => {
+    const mockApi = {
+      addressLabels: vi.fn().mockResolvedValue({
+        pagination: { page: 1, per_page: 100, is_last_page: true },
+        data: [{ label: 'Fund', category: 'fund', kind: ['entity/fund'] }]
+      }),
+    };
+
+    const result = await batchProfile(mockApi, {
+      addresses: ['0x0000000000000000000000000000000000000001'],
+      chain: 'ethereum',
+      include: ['labels'],
+      delayMs: 0,
+    });
+
+    expect(result.results[0].labels).toEqual([
+      { label: 'Fund', category: 'fund', kind: ['entity/fund'] }
+    ]);
   });
 
   it('should capture individual errors without failing batch', async () => {
@@ -4218,6 +5086,48 @@ describe('research command routing', () => {
     expect(result.commands).toContain('screener');
   });
 
+  it('should keep research perp help analytics-only', async () => {
+    const commands = buildCommands({});
+    const result = await commands.research(['perp', 'help'], null, {}, {});
+    expect(result.commands).toEqual(['screener', 'leaderboard']);
+  });
+
+  it.each([
+    ['screener', 'perpScreener'],
+    ['leaderboard', 'perpLeaderboard'],
+  ])('should delegate research perp %s to the analytics handler', async (subcommand, method) => {
+    const mockApi = { [method]: vi.fn().mockResolvedValue({ data: [] }) };
+    const commands = buildCommands({});
+
+    await commands.research(['perp', subcommand], mockApi, {}, {});
+
+    expect(mockApi[method]).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    'order',
+    'cancel',
+    'close',
+    'leverage',
+    'transfer',
+    'approve-builder-fee',
+    'positions',
+    'orders',
+    'account',
+    'meta',
+  ])(
+    'should not route research perp %s to the top-level perp handler',
+    async (subcommand) => {
+      const commands = buildCommands({});
+
+      await expect(commands.research(['perp', subcommand], null, {}, {}))
+        .rejects.toMatchObject({
+          code: 'UNKNOWN',
+          message: `Unknown perp analytics subcommand: ${subcommand}. Available: screener, leaderboard`,
+        });
+    },
+  );
+
   it('should error on unknown category', async () => {
     const commands = buildCommands({});
     await expect(commands.research(['unknown'], null, {}, {}))
@@ -4288,7 +5198,8 @@ describe('deprecation warnings', () => {
     expect(DEPRECATED_TO_RESEARCH.has('token')).toBe(true);
     expect(DEPRECATED_TO_RESEARCH.has('search')).toBe(true);
     expect(DEPRECATED_TO_RESEARCH.has('portfolio')).toBe(true);
-    expect(DEPRECATED_TO_RESEARCH.has('points')).toBe(true);
+    // Points is unavailable in both forms, so there is no replacement alias to suggest.
+    expect(DEPRECATED_TO_RESEARCH.has('points')).toBe(false);
     // 'perp' is a top-level trading command (nansen perp order|close|...), not a
     // deprecated alias for 'research perp', so it must not be in this set.
     expect(DEPRECATED_TO_RESEARCH.has('perp')).toBe(false);
@@ -4454,6 +5365,23 @@ describe('web search subcommand', () => {
   it('handles --query as an array (repeated flag)', async () => {
     await webCmd([], { query: ['btc news', 'eth news'] });
     expect(mockApi.webSearch).toHaveBeenCalledWith({ queries: ['btc news', 'eth news'], numResults: undefined });
+  });
+
+  it('handles --query as a JSON array (single flag parsed to an array)', async () => {
+    // parseArgs JSON.parses option values, so `--query '["btc","eth"]'` arrives
+    // here as an actual array, same shape as a repeated --query flag.
+    await webCmd([], { query: ['btc', 'eth'] });
+    expect(mockApi.webSearch).toHaveBeenCalledWith({ queries: ['btc', 'eth'], numResults: undefined });
+  });
+
+  it('rejects --query as a JSON object with INVALID_PARAMS', async () => {
+    // `--query '{"a":1}'` is JSON.parsed to a plain object before cli.js sees it.
+    await expect(webCmd([], { query: { a: 1 } })).rejects.toThrow('--query values must be strings');
+  });
+
+  it('rejects --query as a JSON array of non-strings with INVALID_PARAMS', async () => {
+    // `--query '[1,2]'` is JSON.parsed to an array of numbers.
+    await expect(webCmd([], { query: [1, 2] })).rejects.toThrow('--query values must be strings');
   });
 
   it('passes --num-results as numResults (parsed as int)', async () => {
@@ -4916,5 +5844,49 @@ describe('perp screener CLI handler - new filters (ECINT-6680)', () => {
       smLabelFilter: ['30D Smart Trader'],
       traderLabelFilter: ['HL Perps Whale'],
     }));
+  });
+
+  it('rejects non-string sectors-filter (JSON-primitive) with INVALID_PARAMS instead of crashing', async () => {
+    await expect(
+      commands['perp'](['screener'], mockApi, {}, { 'sectors-filter': true })
+    ).rejects.toMatchObject({ code: ErrorCode.INVALID_PARAMS });
+  });
+
+  it('accepts a repeated --sectors-filter flag (parseArgs array) instead of rejecting it as non-string', async () => {
+    await commands['perp'](['screener'], mockApi, {}, { 'sectors-filter': ['Crypto:AI', 'Crypto:DeFi'] });
+    expect(mockApi.perpScreener).toHaveBeenCalledWith(expect.objectContaining({
+      sectorsFilter: ['Crypto:AI', 'Crypto:DeFi'],
+    }));
+  });
+
+  it('rejects a non-string element in a repeated --sectors-filter flag', async () => {
+    await expect(
+      commands['perp'](['screener'], mockApi, {}, { 'sectors-filter': ['Crypto:AI', true] })
+    ).rejects.toMatchObject({ code: ErrorCode.INVALID_PARAMS });
+  });
+
+  it('trims whitespace and drops blank entries in a repeated --sectors-filter flag, matching the CSV-string path', async () => {
+    await commands['perp'](['screener'], mockApi, {}, { 'sectors-filter': [' Crypto:AI ', '', 'Crypto:DeFi'] });
+    expect(mockApi.perpScreener).toHaveBeenCalledWith(expect.objectContaining({
+      sectorsFilter: ['Crypto:AI', 'Crypto:DeFi'],
+    }));
+  });
+
+  it('rejects non-string sm-label-filter (JSON-primitive) with INVALID_PARAMS instead of crashing', async () => {
+    await expect(
+      commands['perp'](['screener'], mockApi, {}, { 'sm-label-filter': true })
+    ).rejects.toMatchObject({ code: ErrorCode.INVALID_PARAMS });
+  });
+
+  it('rejects non-string trader-label-filter (JSON-primitive) with INVALID_PARAMS instead of crashing', async () => {
+    await expect(
+      commands['perp'](['screener'], mockApi, {}, { 'trader-label-filter': true })
+    ).rejects.toMatchObject({ code: ErrorCode.INVALID_PARAMS });
+  });
+
+  it('treats an empty --sectors-filter as "no filter" (undefined), not an empty-array filter', async () => {
+    await commands['perp'](['screener'], mockApi, {}, { 'sectors-filter': '' });
+    const call = mockApi.perpScreener.mock.calls[0][0];
+    expect(call.sectorsFilter).toBeUndefined();
   });
 });
