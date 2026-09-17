@@ -6,7 +6,7 @@
  * implementation without circular imports.
  */
 
-import { NansenError, ErrorCode } from './api.js';
+import { NansenError, CommandError, ErrorCode } from './api.js';
 
 export function buildPagination(options) {
   if (options.limit === undefined && options.page === undefined) return undefined;
@@ -51,4 +51,11 @@ export function parseCsvOption(val, name) {
     throw new NansenError(`--${name} must be a string`, ErrorCode.INVALID_PARAMS);
   }
   return val.split(',').map(s => s.trim()).filter(Boolean);
+}
+
+/** Reject explicit blank strings before a handler selects an omitted-option default. */
+export function rejectBlankOption(value, name, example) {
+  if (typeof value === 'string' && value.trim() === '') {
+    throw new CommandError(`--${name} requires a value. Usage: --${name} ${example}`, 'MISSING_PARAM');
+  }
 }

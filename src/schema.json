@@ -410,7 +410,7 @@
       }
     },
     "research": {
-      "description": "Research and analytics commands",
+      "description": "Research and analytics commands. Explicitly blank chain, timeframe, and days options are rejected instead of selecting defaults. Profiler batch rejects blank --delay; trace rejects blank --delay, --depth, and --width.",
       "subcommands": {
         "portfolio": {
           "subcommands": {
@@ -853,7 +853,7 @@
             },
             "who-bought-sold": {
               "endpoint": "/api/v1/tgm/who-bought-sold",
-              "description": "Recent buyers and sellers",
+              "description": "Recent buyers and sellers. Explicitly blank --buy-or-sell values are rejected; omission keeps BUY.",
               "options": {
                 "chain": {
                   "type": "string",
@@ -2004,7 +2004,7 @@
       "description": "DEX trading commands",
       "subcommands": {
         "quote": {
-          "description": "Get a DEX swap quote (same-chain or cross-chain)",
+          "description": "Get a DEX swap quote (same-chain or cross-chain). Explicitly blank --swap-mode, --wallet, --to-chain, --aggregator, and --amount-unit values are rejected.",
           "options": {
             "chain": {
               "type": "string",
@@ -2074,7 +2074,7 @@
           ]
         },
         "execute": {
-          "description": "Sign and broadcast a quoted trade",
+          "description": "Sign and broadcast a quoted trade. Explicitly blank --wallet values are rejected.",
           "options": {
             "quote": {
               "type": "string",
@@ -2140,7 +2140,7 @@
           "description": "Limit order management (Solana only)",
           "subcommands": {
             "create": {
-              "description": "Place a new limit order",
+              "description": "Place a new limit order. Explicitly blank --expires values are rejected; omission keeps the 30d default. Explicitly blank --wallet values are rejected.",
               "options": {
                 "from": {
                   "type": "string",
@@ -2194,7 +2194,7 @@
               ]
             },
             "list": {
-              "description": "List your limit orders",
+              "description": "List your limit orders. Explicitly blank --wallet, --limit, --offset, --dir, and --mint values are rejected.",
               "options": {
                 "state": {
                   "type": "string",
@@ -2233,7 +2233,7 @@
               ]
             },
             "cancel": {
-              "description": "Cancel an open limit order",
+              "description": "Cancel an open limit order. Explicitly blank --wallet values are rejected.",
               "options": {
                 "order": {
                   "type": "string",
@@ -2250,7 +2250,7 @@
               ]
             },
             "update": {
-              "description": "Update trigger price or slippage on an existing order",
+              "description": "Update trigger price or slippage on an existing order. Explicitly blank --wallet values are rejected.",
               "options": {
                 "order": {
                   "type": "string",
@@ -2282,7 +2282,7 @@
       "description": "Wallet management. x402 auto-payments are guarded by a client-side policy: per-payment USD cap via NANSEN_X402_MAX_AMOUNT (default 1.00; 'unlimited' to disable) and an optional recipient allowlist via NANSEN_X402_ALLOWED_PAYTO (comma-separated addresses).",
       "subcommands": {
         "create": {
-          "description": "Create a new wallet",
+          "description": "Create a new wallet. Explicitly blank --name values are rejected for local and Privy wallets.",
           "options": {
             "unsafe-no-password": {
               "type": "boolean",
@@ -2302,7 +2302,7 @@
           }
         },
         "send": {
-          "description": "Send tokens or native currency",
+          "description": "Send tokens or native currency. Explicitly blank --token and --wallet values are rejected; omit them for native currency and the default wallet.",
           "options": {
             "to": {
               "type": "string",
