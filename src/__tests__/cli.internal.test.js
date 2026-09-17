@@ -775,6 +775,20 @@ describe('alerts list — client-side filtering', () => {
     expect(result[0].id).toBe('4');
   });
 
+  it('should reject a non-string --token-address instead of crashing on .toLowerCase()', async () => {
+    const { mockApi, cmd } = setup();
+    await expect(cmd(['list'], mockApi, {}, { 'token-address': true }))
+      .rejects.toThrow('--token-address must be a string');
+    expect(mockApi.alertsList).not.toHaveBeenCalled();
+  });
+
+  it('should reject a non-string --chain instead of crashing on .toLowerCase()', async () => {
+    const { mockApi, cmd } = setup();
+    await expect(cmd(['list'], mockApi, {}, { chain: false }))
+      .rejects.toThrow('--chain must be a string');
+    expect(mockApi.alertsList).not.toHaveBeenCalled();
+  });
+
   it('should apply --limit', async () => {
     const { mockApi, cmd } = setup();
     const result = await cmd(['list'], mockApi, {}, { limit: 2 });
