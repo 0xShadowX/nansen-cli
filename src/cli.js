@@ -295,6 +295,21 @@ function parseNonNegativeSafeIntegerOption(name, options, flags, defaultValue) {
   return value;
 }
 
+
+function parseDaysOption(options, flags) {
+  const days = parseNonNegativeSafeIntegerOption('days', options, flags, 30);
+  // Safe integers can still exceed JavaScript Date's representable range.
+  // Reject those values before they reach date-based analytics requests.
+  const fromMs = Date.now() - days * 24 * 60 * 60 * 1000;
+  if (Number.isNaN(new Date(fromMs).getTime())) {
+    throw new NansenError(
+      `--days is outside the supported date range; received: ${days}`,
+      ErrorCode.INVALID_PARAMS,
+    );
+  }
+  return days;
+}
+
 // Format a single value for table display
 export function formatValue(val) {
   if (val === null || val === undefined) return '';
@@ -1338,7 +1353,9 @@ export function buildCommands(deps = {}) {
           : [options.labels];
       }
 
-      const days = options.days ? parseInt(options.days) : 30;
+      const days = subcommand === 'historical-holdings'
+        ? parseDaysOption(options, flags)
+        : 30;
 
       const handlers = {
         'netflow': () => apiInstance.smartMoneyNetflow({ chains, filters, orderBy, pagination }),
@@ -1384,7 +1401,20 @@ export function buildCommands(deps = {}) {
       const filters = options.filters || {};
       const orderBy = parseSort(options.sort, options['order-by']);
       const pagination = buildPagination(options);
-      const days = options.days ? parseInt(options.days) : 30;
+      const days = [
+        'transactions',
+        'pnl',
+        'historical-balances',
+        'counterparties',
+        'counterparties-batch',
+        'pnl-summary',
+        'perp-trades',
+        'dex-trades',
+        'trace',
+        'compare',
+      ].includes(subcommand)
+        ? parseDaysOption(options, flags)
+        : 30;
 
       const handlers = {
         'balance': () => apiInstance.addressBalance({ address, entityName, chain, filters, orderBy }),
@@ -1484,7 +1514,17 @@ export function buildCommands(deps = {}) {
       const filters = options.filters || {};
       const orderBy = parseSort(options.sort, options['order-by']);
       const pagination = buildPagination(options);
-      const days = options.days ? parseInt(options.days) : 30;
+      const days = [
+        'flows',
+        'dex-trades',
+        'pnl',
+        'who-bought-sold',
+        'transfers',
+        'perp-trades',
+        'perp-pnl-leaderboard',
+      ].includes(subcommand)
+        ? parseDaysOption(options, flags)
+        : 30;
 
       // Convenience filter for smart money only
       const onlySmartMoney = options['smart-money'] || flags['smart-money'] || false;
@@ -1631,7 +1671,9 @@ export function buildCommands(deps = {}) {
       const filters = options.filters || {};
       const orderBy = parseSort(options.sort, options['order-by']);
       const pagination = buildPagination(options);
-      const days = options.days ? parseInt(options.days) : 30;
+      const days = ['screener', 'leaderboard'].includes(subcommand)
+        ? parseDaysOption(options, flags)
+        : 30;
 
       const handlers = {
         'screener': () => {
