@@ -4,6 +4,7 @@
  */
 
 import { NansenError, ErrorCode } from '../api.js';
+import { parseCsvOption } from '../query-options.js';
 
 // ============= Formatting =============
 
@@ -53,10 +54,13 @@ export function formatAlertsTable(alerts) {
  * Parse a token string "address:chain" into { address, chain }.
  * Handles single string or array of strings (from repeated --token flags).
  */
-function parseTokens(tokenArg) {
-  if (!tokenArg) return undefined;
+function parseTokens(tokenArg, name) {
+  if (tokenArg === undefined || tokenArg === '') return undefined;
   const tokens = Array.isArray(tokenArg) ? tokenArg : [tokenArg];
   return tokens.map(t => {
+    if (typeof t !== 'string') {
+      throw new NansenError(`--${name} values must be strings`, ErrorCode.INVALID_PARAMS);
+    }
     const colonIdx = t.lastIndexOf(':');
     if (colonIdx === -1) throw new NansenError(`Invalid token format: "${t}". Expected address:chain`, ErrorCode.INVALID_PARAMS);
     return { address: t.slice(0, colonIdx), chain: t.slice(colonIdx + 1) };
@@ -67,10 +71,13 @@ function parseTokens(tokenArg) {
  * Parse a subject string "type:value" into { type, value }.
  * Handles single string or array (from repeated --subject flags).
  */
-function parseSubjects(subjectArg) {
-  if (!subjectArg) return undefined;
+function parseSubjects(subjectArg, name) {
+  if (subjectArg === undefined || subjectArg === '') return undefined;
   const subjects = Array.isArray(subjectArg) ? subjectArg : [subjectArg];
   return subjects.map(s => {
+    if (typeof s !== 'string') {
+      throw new NansenError(`--${name} values must be strings`, ErrorCode.INVALID_PARAMS);
+    }
     const colonIdx = s.indexOf(':');
     if (colonIdx === -1) throw new NansenError(`Invalid subject format: "${s}". Expected type:value`, ErrorCode.INVALID_PARAMS);
     return { type: s.slice(0, colonIdx), value: s.slice(colonIdx + 1) };
@@ -102,9 +109,7 @@ function deepMergePlain(target, source) {
  * Normalise chains option to array.
  */
 function parseChains(chainsOpt) {
-  if (!chainsOpt) return undefined;
-  if (Array.isArray(chainsOpt)) return chainsOpt;
-  return chainsOpt.split(',').map(s => s.trim()).filter(Boolean);
+  return parseCsvOption(chainsOpt, 'chains');
 }
 
 /**
@@ -122,6 +127,21 @@ function parseFiniteNumber(raw, name) {
     throw new NansenError(`Invalid --${name} "${raw}": must be a number`, ErrorCode.INVALID_PARAMS);
   }
   return n;
+}
+
+/**
+ * Validate a single-value string filter option (e.g. --chain, --token-address).
+ * Empty string/undefined mean "not provided"; any other non-string value
+ * (e.g. `--chain true`, from parseArgs' JSON.parse of option values) is
+ * rejected instead of crashing on .toLowerCase() or being silently dropped
+ * by a falsy check.
+ */
+function parseStringFilter(val, name) {
+  if (val === undefined || val === '') return undefined;
+  if (typeof val !== 'string') {
+    throw new NansenError(`--${name} must be a string`, ErrorCode.INVALID_PARAMS);
+  }
+  return val;
 }
 
 function parseNonNegativeIntegerOption(raw, name) {
@@ -146,14 +166,6 @@ function buildRange(minVal, maxVal, name) {
 }
 
 /**
- * Normalise a repeatable string option to array, or undefined if absent.
- */
-function normArray(val) {
-  if (!val) return undefined;
-  return Array.isArray(val) ? val : [val];
-}
-
-/**
  * Build the data payload for sm-token-flows alerts from named flags.
  */
 export function buildSmTokenFlowsData(options) {
@@ -171,14 +183,14 @@ export function buildSmTokenFlowsData(options) {
     }
   }
 
-  const tokens = parseTokens(options.token);
-  const excludeTokens = parseTokens(options['exclude-token']);
+  const tokens = parseTokens(options.token, 'token');
+  const excludeTokens = parseTokens(options['exclude-token'], 'exclude-token');
   if (tokens) data.inclusion = { ...data.inclusion, tokens };
   if (excludeTokens) data.exclusion = { ...data.exclusion, tokens: excludeTokens };
 
-  const sectors = normArray(options['token-sector']);
+  const sectors = parseCsvOption(options['token-sector'], 'token-sector');
   if (sectors) data.inclusion = { ...data.inclusion, tokenSectors: sectors };
-  const excludeSectors = normArray(options['exclude-token-sector']);
+  const excludeSectors = parseCsvOption(options['exclude-token-sector'], 'exclude-token-sector');
   if (excludeSectors) data.exclusion = { ...data.exclusion, tokenSectors: excludeSectors };
 
   if (options['token-age-max'] !== undefined) {
@@ -203,9 +215,8 @@ export function buildCommonTokenTransferData(options) {
   const chains = parseChains(options.chains);
   if (chains) data.chains = chains;
 
-  if (options.events) {
-    data.events = typeof options.events === 'string' ? options.events.split(',') : options.events;
-  }
+  const events = parseCsvOption(options.events, 'events');
+  if (events) data.events = events;
 
   const usdRange = buildRange(options['usd-min'], options['usd-max'], 'usd');
   if (usdRange) data.usdValue = usdRange;
@@ -213,20 +224,20 @@ export function buildCommonTokenTransferData(options) {
   const amountRange = buildRange(options['token-amount-min'], options['token-amount-max'], 'token-amount');
   if (amountRange) data.tokenAmount = amountRange;
 
-  const subjects = parseSubjects(options.subject);
+  const subjects = parseSubjects(options.subject, 'subject');
   if (subjects) data.subjects = subjects;
 
-  const counterparties = parseSubjects(options.counterparty);
+  const counterparties = parseSubjects(options.counterparty, 'counterparty');
   if (counterparties) data.counterparties = counterparties;
 
-  const tokens = parseTokens(options.token);
-  const excludeTokens = parseTokens(options['exclude-token']);
+  const tokens = parseTokens(options.token, 'token');
+  const excludeTokens = parseTokens(options['exclude-token'], 'exclude-token');
   if (tokens) data.inclusion = { ...data.inclusion, tokens };
   if (excludeTokens) data.exclusion = { ...data.exclusion, tokens: excludeTokens };
 
-  const sectors = normArray(options['token-sector']);
+  const sectors = parseCsvOption(options['token-sector'], 'token-sector');
   if (sectors) data.inclusion = { ...data.inclusion, tokenSectors: sectors };
-  const excludeSectors = normArray(options['exclude-token-sector']);
+  const excludeSectors = parseCsvOption(options['exclude-token-sector'], 'exclude-token-sector');
   if (excludeSectors) data.exclusion = { ...data.exclusion, tokenSectors: excludeSectors };
 
   const tokenAgeMin = options['token-age-min'];
@@ -241,9 +252,9 @@ export function buildCommonTokenTransferData(options) {
   const marketCapRange = buildRange(options['market-cap-min'], options['market-cap-max'], 'market-cap');
   if (marketCapRange) data.inclusion = { ...data.inclusion, marketCap: marketCapRange };
 
-  const excludeFrom = parseSubjects(options['exclude-from']);
+  const excludeFrom = parseSubjects(options['exclude-from'], 'exclude-from');
   if (excludeFrom) data.exclusion = { ...data.exclusion, fromTargets: excludeFrom };
-  const excludeTo = parseSubjects(options['exclude-to']);
+  const excludeTo = parseSubjects(options['exclude-to'], 'exclude-to');
   if (excludeTo) data.exclusion = { ...data.exclusion, toTargets: excludeTo };
 
   return data;
@@ -261,16 +272,13 @@ export function buildSmartContractCallData(options) {
   const usdRange = buildRange(options['usd-min'], options['usd-max'], 'usd');
   if (usdRange) data.usdValue = usdRange;
 
-  if (options['signature-hash']) {
-    data.signatureHash = Array.isArray(options['signature-hash'])
-      ? options['signature-hash']
-      : [options['signature-hash']];
-  }
+  const signatureHash = parseCsvOption(options['signature-hash'], 'signature-hash');
+  if (signatureHash) data.signatureHash = signatureHash;
 
-  const callers = parseSubjects(options.caller);
-  const contracts = parseSubjects(options.contract);
-  const excludeCallers = parseSubjects(options['exclude-caller']);
-  const excludeContracts = parseSubjects(options['exclude-contract']);
+  const callers = parseSubjects(options.caller, 'caller');
+  const contracts = parseSubjects(options.contract, 'contract');
+  const excludeCallers = parseSubjects(options['exclude-caller'], 'exclude-caller');
+  const excludeContracts = parseSubjects(options['exclude-contract'], 'exclude-contract');
 
   if (callers) data.inclusion = { ...data.inclusion, caller: callers };
   if (contracts) data.inclusion = { ...data.inclusion, smartContract: contracts };
@@ -612,6 +620,8 @@ USAGE:
 
           const offset = parseNonNegativeIntegerOption(options.offset, 'offset');
           const limit = parseNonNegativeIntegerOption(options.limit, 'limit');
+          const tokenAddress = parseStringFilter(options['token-address'], 'token-address');
+          const chainFilter = parseStringFilter(options.chain, 'chain');
 
           const results = await apiInstance.alertsList();
           let alerts = Array.isArray(results) ? results : results?.alerts ?? results?.data ?? [];
@@ -620,15 +630,15 @@ USAGE:
           if (options.type) alerts = alerts.filter(a => a.type === options.type);
           if (flags.enabled) alerts = alerts.filter(a => a.isEnabled === true);
           if (flags.disabled) alerts = alerts.filter(a => a.isEnabled === false);
-          if (options['token-address']) {
-            const addr = options['token-address'].toLowerCase();
+          if (tokenAddress) {
+            const addr = tokenAddress.toLowerCase();
             alerts = alerts.filter(a => {
               const allTokens = [...(a.data?.inclusion?.tokens ?? []), ...(a.data?.exclusion?.tokens ?? [])];
               return allTokens.some(t => t.address?.toLowerCase() === addr);
             });
           }
-          if (options.chain) {
-            const ch = options.chain.toLowerCase();
+          if (chainFilter) {
+            const ch = chainFilter.toLowerCase();
             alerts = alerts.filter(a => {
               const chains = a.data?.chains;
               return Array.isArray(chains) && chains.some(c => c.toLowerCase() === ch || c === 'all');

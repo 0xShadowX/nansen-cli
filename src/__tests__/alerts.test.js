@@ -55,3 +55,68 @@ describe('alerts numeric range validation', () => {
     expect(buildSmTokenFlowsData({}).inflow_1h).toBeUndefined();
   });
 });
+
+/**
+ * parseArgs runs JSON.parse on option values, so `--flag true` /
+ * `--flag false` / `--flag null` become JS primitives, not strings. These
+ * handlers either crashed with a raw TypeError calling string methods on a
+ * non-string option, or silently dropped/passed through bad values instead
+ * of raising INVALID_PARAMS.
+ */
+describe('alerts string/array option validation', () => {
+  it('rejects non-string --chains instead of crashing on .split()', () => {
+    expect(() => buildSmTokenFlowsData({ chains: true })).toThrow(/--chains/);
+  });
+
+  it('rejects a non-string element in a repeated --chains array', () => {
+    expect(() => buildSmTokenFlowsData({ chains: ['ethereum', true] })).toThrow(/--chains/);
+  });
+
+  it('rejects --chains false/--chains null instead of silently dropping the filter', () => {
+    expect(() => buildSmTokenFlowsData({ chains: false })).toThrow(/--chains/);
+    expect(() => buildSmTokenFlowsData({ chains: null })).toThrow(/--chains/);
+  });
+
+  it('rejects non-string --token instead of crashing on .lastIndexOf()', () => {
+    expect(() => buildCommonTokenTransferData({ token: true })).toThrow(/--token/);
+  });
+
+  it('rejects a non-string element in a repeated --token array', () => {
+    expect(() => buildCommonTokenTransferData({ token: ['0xabc:ethereum', true] })).toThrow(/--token/);
+  });
+
+  it('rejects non-string --subject instead of crashing on .indexOf()', () => {
+    expect(() => buildCommonTokenTransferData({ subject: true })).toThrow(/--subject/);
+  });
+
+  it('rejects non-string --caller/--contract on smart-contract-call', () => {
+    expect(() => buildSmartContractCallData({ caller: true })).toThrow(/--caller/);
+    expect(() => buildSmartContractCallData({ contract: false })).toThrow(/--contract/);
+  });
+
+  it('rejects --events true/[true] instead of passing them through into the payload', () => {
+    expect(() => buildCommonTokenTransferData({ events: true })).toThrow(/--events/);
+    expect(() => buildCommonTokenTransferData({ events: [true] })).toThrow(/--events/);
+    expect(() => buildCommonTokenTransferData({ events: ['send', true] })).toThrow(/--events/);
+  });
+
+  it('still splits a valid comma-separated --events string', () => {
+    const data = buildCommonTokenTransferData({ events: 'send,receive' });
+    expect(data.events).toEqual(['send', 'receive']);
+  });
+
+  it('rejects non-string --signature-hash instead of passing it through unchecked', () => {
+    expect(() => buildSmartContractCallData({ 'signature-hash': true })).toThrow(/--signature-hash/);
+    expect(() => buildSmartContractCallData({ 'signature-hash': [true] })).toThrow(/--signature-hash/);
+  });
+
+  it('rejects non-string --token-sector instead of dropping it silently', () => {
+    expect(() => buildSmTokenFlowsData({ 'token-sector': true })).toThrow(/--token-sector/);
+    expect(() => buildSmTokenFlowsData({ 'token-sector': false })).toThrow(/--token-sector/);
+  });
+
+  it('accepts a valid --token-sector value', () => {
+    const data = buildSmTokenFlowsData({ 'token-sector': 'real-world-assets' });
+    expect(data.inclusion.tokenSectors).toEqual(['real-world-assets']);
+  });
+});
