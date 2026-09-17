@@ -2337,7 +2337,7 @@ describe('buildCommands', () => {
     it('should read profiler counterparties-batch addresses from --file', async () => {
       const addressA = '0x0000000000000000000000000000000000000001';
       const addressB = '0x0000000000000000000000000000000000000002';
-      const file = _path.join(process.cwd(), `.counterparties-batch-${process.pid}.txt`);
+      const file = `.counterparties-batch-${process.pid}.txt`;
       const mockApi = {
         addressCounterpartiesBatch: vi.fn().mockResolvedValue({ data: [] }),
       };
