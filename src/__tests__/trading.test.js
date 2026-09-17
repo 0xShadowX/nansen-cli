@@ -6389,6 +6389,32 @@ describe('Relay aggregator: --aggregator filter on trade quote', () => {
       'swap-mode': 'exactOut',
     })).rejects.toThrow(/max-auto-slippage/i);
   });
+
+  it('rejects a blank --max-auto-slippage instead of sending an uncapped exactOut quote', async () => {
+    const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+    // `--max-auto-slippage ""` reaches the handler as an empty string, which
+    // Number() turns into 0: in range, not null, and then falsy when the request
+    // is built, so the exactOut cap requirement would pass with no cap sent.
+    await expect(cmds.quote([], null, { 'auto-slippage': true }, {
+      chain: 'base',
+      from: 'USDC',
+      to: 'ETH',
+      amount: '1000000',
+      'swap-mode': 'exactOut',
+      'max-auto-slippage': '',
+    })).rejects.toThrow(/Invalid --max-auto-slippage/);
+  });
+
+  it('rejects a blank --slippage rather than reading it as zero', async () => {
+    const cmds = buildTradingCommands({ log: () => {}, exit: () => {} });
+    await expect(cmds.quote([], null, {}, {
+      chain: 'base',
+      from: 'USDC',
+      to: 'ETH',
+      amount: '1000000',
+      slippage: '',
+    })).rejects.toThrow(/Invalid --slippage/);
+  });
 });
 
 describe('Relay aggregator: bridge-status 502 handling', () => {

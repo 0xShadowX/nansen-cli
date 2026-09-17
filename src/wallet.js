@@ -3,6 +3,7 @@
  * Local key generation and storage for EVM and Solana chains.
  */
 
+import { rejectBlankOption } from './query-options.js';
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
@@ -588,6 +589,7 @@ export function buildWalletCommands(deps = {}) {
   return {
     'wallet': async (args, apiInstance, flags, options) => {
       const subcommand = args[0] || 'help';
+      if (subcommand === 'create') rejectBlankOption(options.name, 'name', '<name>');
 
       // Privy-specific: only 'create' and policy commands need --provider privy
       if (options.provider === 'privy' || process.env.NANSEN_WALLET_PROVIDER === 'privy') {
@@ -837,6 +839,8 @@ export function buildWalletCommands(deps = {}) {
         },
 
         'send': async () => {
+          rejectBlankOption(options.token, 'token', '<token-address>');
+          rejectBlankOption(options.wallet, 'wallet', '<name>');
           const { sendTokens } = await import('./transfer.js');
 
           if (!options.to) {

@@ -5,6 +5,7 @@
  * Zero external dependencies — uses Node.js built-in crypto only.
  */
 
+import { rejectBlankOption } from './query-options.js';
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
@@ -2028,6 +2029,12 @@ export function buildTradingCommands(deps = {}) {
 
   return {
     'quote': async (args, apiInstance, flags, options) => {
+      for (const [name, example] of [
+        ['swap-mode', 'exactIn'], ['wallet', '<name>'], ['to-chain', 'solana'],
+        ['aggregator', 'relay'], ['amount-unit', 'base'],
+      ]) {
+        rejectBlankOption(options[name], name, example);
+      }
       const chain = options.chain || args[0];
       const toChainRaw = options['to-chain'];
       const fromRaw = options.from || options['from-token'] || args[1];
@@ -2061,6 +2068,15 @@ export function buildTradingCommands(deps = {}) {
       // can't become a 300% slippage tolerance.
       for (const [optName, optVal] of [['slippage', slippage], ['max-auto-slippage', maxAutoSlippage]]) {
         if (optVal == null) continue;
+        // A blank value must not read as "not supplied": `Number('')` is 0, which
+        // would pass the range check below and satisfy the exactOut cap
+        // requirement even though the caller supplied no number.
+        if (typeof optVal === 'string' && optVal.trim() === '') {
+          throw new CommandError(
+            `Invalid --${optName} "". Use a decimal between 0 and 1 (e.g. 0.03 for 3%).`,
+            'INVALID_SLIPPAGE'
+          );
+        }
         const n = Number(optVal);
         if (!Number.isFinite(n) || n < 0 || n > 1) {
           throw new CommandError(
@@ -2349,9 +2365,9 @@ CROSS-CHAIN NOTES (when using --to-chain):
             }
           }
         }
-        if (slippage) params.slippagePercent = slippage;
+        if (slippage != null) params.slippagePercent = slippage;
         if (autoSlippage) params.autoSlippage = true;
-        if (maxAutoSlippage) params.maxAutoSlippagePercent = maxAutoSlippage;
+        if (maxAutoSlippage != null) params.maxAutoSlippagePercent = maxAutoSlippage;
         if (swapMode !== 'exactIn') params.swapMode = swapMode;
 
         const response = await getQuote(params);
@@ -2484,6 +2500,7 @@ CROSS-CHAIN NOTES (when using --to-chain):
     },
 
     'execute': async (args, apiInstance, flags, options) => {
+      rejectBlankOption(options.wallet, 'wallet', '<name>');
       const quoteId = options.quote || options['quote-id'] || args[0];
       const walletName = options.wallet;
       const noSimulate = flags['no-simulate'];

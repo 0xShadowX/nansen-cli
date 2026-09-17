@@ -246,6 +246,12 @@ export function buildMcpCommands(deps = {}) {
     if ('url' in options && typeof options.url !== 'string') {
       throw new CommandError('--url must be a single URL string. Usage: nansen mcp verify --url <url>', 'INVALID_PARAMS');
     }
+    // An explicit blank value, e.g. `--url "$UNSET_VAR"`, must not fall through
+    // to the default endpoint below: the caller would be told the Nansen URL
+    // verified while believing they had checked their own.
+    if (typeof options.url === 'string' && options.url.trim() === '') {
+      throw new CommandError('--url requires a value. Usage: nansen mcp verify --url <url>', 'MISSING_PARAM');
+    }
 
     const url = options.url || DEFAULT_MCP_URL;
     const checks = await runMcpVerifyChecks({

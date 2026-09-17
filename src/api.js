@@ -386,6 +386,80 @@ const ADDRESS_PATTERNS = {
   bitcoin: /^(1|3|bc1)[a-zA-HJ-NP-Z0-9]{25,62}$/,
 };
 
+// Server-side limits on the batch counterparties endpoint. Checked client-side so
+// an over-limit request fails with an actionable message instead of a 422.
+export const COUNTERPARTIES_BATCH_MAX_ADDRESSES = 10;
+export const COUNTERPARTIES_BATCH_MAX_DAYS = 90;
+
+/**
+ * Chains the batch counterparties endpoint accepts: the upstream `ProfilerChain`
+ * enum from https://api.nansen.ai/openapi.json, which is what the request model
+ * validates `chain` against. Anything outside it is a 422.
+ *
+ * Deliberately NOT derived from EVM_CHAINS. That list is this CLI's own
+ * address-format/ENS set and disagrees with the endpoint in both directions: it
+ * carries `scroll` and `ronin`, which the endpoint rejects, and omits every
+ * non-EVM chain the endpoint does serve (bitcoin, tron, sui, ton, near, ...).
+ * Mirrors ADDRESS_COUNTERPARTIES_BATCH_CHAINS on the MCP side (nansen-ra#3550),
+ * which additionally drops `arc` and `starknet`; the spec enum is the contract
+ * here, so they stay in.
+ */
+export const COUNTERPARTIES_BATCH_CHAINS = [
+  'all', 'arbitrum', 'arc', 'avalanche', 'base', 'bitcoin', 'bnb', 'ethereum',
+  'hyperevm', 'injective', 'iotaevm', 'linea', 'mantle', 'mantra', 'monad',
+  'near', 'optimism', 'plasma', 'polygon', 'robinhood', 'sei', 'solana',
+  'sonic', 'starknet', 'sui', 'ton', 'tron',
+];
+
+/**
+ * A token that is at least shaped like an address: 3-128 chars, no whitespace,
+ * alphanumerics plus the separators bech32/NEAR/TON addresses use.
+ *
+ * COUNTERPARTIES_BATCH_CHAINS admits chains whose address format validateAddress
+ * has no pattern for (arc, injective, mantra, near, robinhood, starknet, sui,
+ * ton, tron), where it falls through to its permissive "any non-empty string"
+ * branch. Accepting those chains must not turn a newline `--file` into a way to
+ * post arbitrary lines as `wallet_addresses`, so this is the floor; the API does
+ * the real per-chain check. Every valid EVM, Solana and Bitcoin address already
+ * satisfies it, so it never fires on a chain that was strictly validated.
+ */
+const ADDRESS_SHAPED = /^[A-Za-z0-9][A-Za-z0-9._-]{2,127}$/;
+
+/**
+ * TON's raw address form: a workchain id, ":", then 64 hex characters —
+ * `0:` for the basechain, `-1:` for the masterchain. Both the ":" and the
+ * leading "-" fail ADDRESS_SHAPED, so raw TON addresses were rejected with a
+ * misleading error even though the endpoint serves them. Matched exactly here
+ * rather than by adding ":" to ADDRESS_SHAPED, which would put a separator no
+ * other supported chain uses back into the floor for every chain. Friendly
+ * (base64url) TON addresses already clear ADDRESS_SHAPED.
+ */
+const TON_RAW_ADDRESS = /^-?\d{1,10}:[0-9a-fA-F]{64}$/;
+
+/** Whether an address clears the shape floor for `chain`. */
+function isAddressShaped(address, chain) {
+  if (ADDRESS_SHAPED.test(address)) return true;
+  return chain === 'ton' && TON_RAW_ADDRESS.test(address);
+}
+
+/**
+ * Resolve a caller-supplied chain to the spelling the batch endpoint accepts,
+ * or throw. `bsc` is the common spelling and the one the API echoes back in
+ * responses, but the request enum only knows `bnb` — normalise rather than
+ * reject, matching the MCP tool.
+ */
+function resolveCounterpartiesBatchChain(chain) {
+  const lowered = String(chain ?? '').trim().toLowerCase();
+  const resolved = lowered === 'bsc' ? 'bnb' : lowered;
+  if (!COUNTERPARTIES_BATCH_CHAINS.includes(resolved)) {
+    throw new NansenError(
+      `Unsupported chain "${chain}" for batch counterparties. Supported chains: ${COUNTERPARTIES_BATCH_CHAINS.join(', ')}.`,
+      ErrorCode.INVALID_PARAMS
+    );
+  }
+  return resolved;
+}
+
 /**
  * Validate address format for a given chain
  * @param {string} address - The address to validate
@@ -442,7 +516,7 @@ export function validateTokenAddress(tokenAddress, chain = 'solana') {
  */
 function requireValidAddress(address, chain) {
   const v = validateAddress(address, chain);
-  if (!v.valid) throw new NansenError(v.error, v.code);
+  if (!v.valid) throw new NansenError(`Invalid address "${address}" for chain "${chain}": ${v.error}`, v.code);
 }
 
 /**
@@ -451,6 +525,20 @@ function requireValidAddress(address, chain) {
 function requireValidToken(tokenAddress, chain) {
   const v = validateTokenAddress(tokenAddress, chain);
   if (!v.valid) throw new NansenError(v.error, v.code);
+}
+
+/**
+ * Which ecosystem chain 'all' would route this address to, or throw if neither.
+ * validateAddress's unknown-chain branch accepts any non-empty string for 'all',
+ * so classify against the concrete formats instead.
+ */
+function classifyAutoDetectedAddress(address) {
+  if (validateAddress(address, 'ethereum').valid) return 'EVM';
+  if (validateAddress(address, 'solana').valid) return 'Solana';
+  throw new NansenError(
+    `Invalid address format: "${address}". With chain "all" every address must be a valid EVM address (0x followed by 40 hex characters) or Solana address (Base58, 32-44 chars).`,
+    ErrorCode.INVALID_ADDRESS
+  );
 }
 
 export function loadConfig() {
@@ -1228,6 +1316,85 @@ export class NansenAPI {
     });
   }
 
+  /**
+   * Batch counterparties for up to 10 distinct wallets in one request.
+   * Results are not aggregated: every row carries the `wallet_address` it belongs to.
+   * Defaults to chain 'all' (the ecosystem is auto-detected), matching the CLI.
+   */
+  async addressCounterpartiesBatch(params = {}) {
+    const { addresses, chain = 'all', filters = {}, orderBy, pagination, days = 30, sourceInput } = params;
+    const resolvedChain = resolveCounterpartiesBatchChain(chain);
+    const list = Array.isArray(addresses) ? addresses : (addresses ? [addresses] : []);
+    // Dedupe on the normalised form, because the server lowercases EVM addresses
+    // before deduping: a checksum-cased repeat must not count twice against the
+    // address limit. Solana (and other case-sensitive) addresses normalise to
+    // themselves. Chain 'all' auto-detects per address, so normalise EVM casing
+    // there too.
+    const normalizeChain = resolvedChain === 'all' ? 'ethereum' : resolvedChain;
+    const walletAddresses = [...new Set(
+      list.map(a => normalizeAddress(String(a).trim(), normalizeChain)).filter(Boolean)
+    )];
+
+    if (walletAddresses.length === 0) {
+      throw new NansenError(
+        'At least one wallet address is required. Pass --addresses "0xabc,0xdef" or --file <path>',
+        ErrorCode.MISSING_PARAM
+      );
+    }
+    if (walletAddresses.length > COUNTERPARTIES_BATCH_MAX_ADDRESSES) {
+      throw new NansenError(
+        `Batch counterparties accepts at most ${COUNTERPARTIES_BATCH_MAX_ADDRESSES} distinct addresses per request, got ${walletAddresses.length}. Split them across several requests.`,
+        ErrorCode.INVALID_PARAMS
+      );
+    }
+    if (!Number.isFinite(days) || days < 1) {
+      throw new NansenError('--days must be a positive number', ErrorCode.INVALID_PARAMS);
+    }
+    if (days > COUNTERPARTIES_BATCH_MAX_DAYS) {
+      throw new NansenError(
+        `Batch counterparties is capped at ${COUNTERPARTIES_BATCH_MAX_DAYS} days, got ${days}. Split the window into several requests, or use the single-wallet counterparties command instead.`,
+        ErrorCode.INVALID_PARAMS
+      );
+    }
+    if (resolvedChain === 'all') {
+      // 'all' routes each address to its own ecosystem, but one request cannot
+      // span both — the server rejects a mixed batch, so fail before sending it.
+      const ecosystems = new Set(walletAddresses.map(classifyAutoDetectedAddress));
+      if (ecosystems.size > 1) {
+        throw new NansenError(
+          "A batch cannot mix EVM and Solana addresses. Query each ecosystem separately; chain='all' auto-detects either ecosystem.",
+          ErrorCode.INVALID_PARAMS
+        );
+      }
+    } else {
+      for (const walletAddress of walletAddresses) {
+        // Strict where this CLI knows the format (EVM, Solana, Bitcoin); a
+        // no-op elsewhere, where the shape floor is all there is.
+        requireValidAddress(walletAddress, resolvedChain);
+        if (!isAddressShaped(walletAddress, resolvedChain)) {
+          const shape = 'an address-shaped token (3-128 characters, letters, digits, ".", "-" or "_")'
+            + (resolvedChain === 'ton'
+              ? ', or a raw TON address (workchain, ":" and 64 hex characters, e.g. "0:" or "-1:")'
+              : '');
+          throw new NansenError(
+            `Invalid address "${walletAddress}" for chain "${resolvedChain}": expected ${shape}. This CLI cannot check ${resolvedChain} address formats, so the API validates the rest.`,
+            ErrorCode.INVALID_ADDRESS
+          );
+        }
+      }
+    }
+
+    return this.request('/api/v1/profiler/address/counterparties/batch', {
+      wallet_addresses: walletAddresses,
+      chain: resolvedChain,
+      date: buildDateRange(days),
+      source_input: sourceInput,
+      filters,
+      order_by: orderBy,
+      pagination
+    });
+  }
+
   async addressPnlSummary(params = {}) {
     // Note: pnl-summary endpoint is non-paginated (returns aggregate stats, not a list).
     // Pagination param intentionally omitted from this request.
@@ -1675,16 +1842,6 @@ export class NansenAPI {
     if (!validation.valid) throw new NansenError(validation.error, validation.code);
     return this.request('/api/v1/prediction-market/address-summary', {
       address,
-      pagination
-    });
-  }
-
-  // ============= Points Endpoints =============
-
-  async pointsLeaderboard(params = {}) {
-    const { tier, pagination } = params;
-    return this.request('/api/v1/points/leaderboard', {
-      tier,
       pagination
     });
   }

@@ -14,7 +14,7 @@ import { buildAgentCommands } from './commands/agent.js';
 import { buildMcpCommands } from './commands/mcp.js';
 import { buildCompletionCommands } from './commands/completion.js';
 import { buildResearchCommands, RESEARCH_HISTORICAL_SUBCOMMANDS, RESEARCH_SUBCOMMANDS } from './commands/research.js';
-import { buildPagination, parseSort } from './query-options.js';
+import { buildPagination, parseSort, parseCsvOption, rejectBlankOption } from './query-options.js';
 export { buildPagination, parseSort };
 import { resolveAddress, isEnsName } from './ens.js';
 import { compareSemver } from './semver.js';
@@ -114,7 +114,10 @@ export function filterFields(data, fields) {
  * Parse comma-separated fields string
  */
 export function parseFields(fieldsOption) {
-  if (!fieldsOption) return null;
+  if (fieldsOption === undefined || fieldsOption === '') return null;
+  if (typeof fieldsOption !== 'string') {
+    throw new NansenError('--fields must be a comma-separated string', ErrorCode.INVALID_PARAMS);
+  }
   return fieldsOption.split(',').map(f => f.trim()).filter(f => f.length > 0);
 }
 
@@ -171,7 +174,7 @@ export const VALUELESS_FLAGS = new Set([
   'pretty', 'help', 'version', 'table', 'no-retry', 'cache', 'no-cache', 'stream',
   'enrich', 'full', 'human', 'enabled', 'disabled', 'expert', 'json', 'offline',
   'no-simulate', 'no-verify-outcome', 'no-revoke-excessive-allowance', 'dry-run',
-  'send-api-key',
+  'send-api-key', 'all', 'max', 'gasless', 'auto-slippage', 'unsafe-no-password',
 ]);
 
 export function parseArgs(args) {
@@ -186,7 +189,10 @@ export function parseArgs(args) {
       
       if (VALUELESS_FLAGS.has(key)) {
         result.flags[key] = true;
-      } else if (next && (!next.startsWith('-') || /^-\d/.test(next))) {
+      // `next !== undefined` rather than a truthiness check: an explicit empty
+      // string is a real value, and skipping it here left `""` dangling to be
+      // picked up as a positional arg on the next iteration.
+      } else if (next !== undefined && (!next.startsWith('-') || /^-\d/.test(next))) {
         // Try to parse as JSON first (for objects/arrays/booleans),
         // but keep numeric strings as strings to avoid precision loss
         // and scientific notation for large integers (e.g. 1e+21).
@@ -220,37 +226,53 @@ export function parseArgs(args) {
   return result;
 }
 
-function parseNonNegativeSafeIntegerOption(name, options, flags, defaultValue) {
+function parseSafeIntegerOption(
+  name,
+  options,
+  flags,
+  defaultValue,
+  requirement = 'safe integer',
+) {
   if (flags[name]) {
     throw new NansenError(
-      `--${name} requires a non-negative safe integer value`,
+      `--${name} requires a ${requirement} value`,
       ErrorCode.INVALID_PARAMS,
     );
   }
+
   if (options[name] === undefined) return defaultValue;
 
   const rawValue = options[name];
+
   if (Array.isArray(rawValue)) {
     throw new NansenError(
       `--${name} may only be specified once`,
       ErrorCode.INVALID_PARAMS,
     );
   }
-  if (typeof rawValue === 'string' && rawValue.trim() === '') {
+
+  if (
+    typeof rawValue === 'boolean' ||
+    (typeof rawValue === 'string' && rawValue.trim() === '')
+  ) {
     throw new NansenError(
-      `--${name} requires a non-negative safe integer value`,
+      `--${name} requires a ${requirement} value`,
       ErrorCode.INVALID_PARAMS,
     );
   }
-  const value = typeof rawValue === 'string' || typeof rawValue === 'number'
-    ? Number(rawValue)
-    : NaN;
-  if (!Number.isSafeInteger(value) || value < 0) {
+
+  const value =
+    typeof rawValue === 'string' || typeof rawValue === 'number'
+      ? Number(rawValue)
+      : NaN;
+
+  if (!Number.isSafeInteger(value)) {
     throw new NansenError(
-      `--${name} must be a non-negative safe integer; received: ${String(rawValue)}`,
+      `--${name} must be a ${requirement}; received: ${String(rawValue)}`,
       ErrorCode.INVALID_PARAMS,
     );
   }
+
   return value;
 }
 
@@ -287,6 +309,41 @@ function parseFiniteNumberOption(name, options, flags) {
   }
   return value;
 }
+
+function parseNonNegativeSafeIntegerOption(name, options, flags, defaultValue) {
+  const value = parseSafeIntegerOption(
+    name,
+    options,
+    flags,
+    defaultValue,
+    'non-negative safe integer',
+  );
+
+  if (value < 0) {
+    throw new NansenError(
+      `--${name} must be a non-negative safe integer; received: ${value}`,
+      ErrorCode.INVALID_PARAMS,
+    );
+  }
+
+  return value;
+}
+
+
+function parseDaysOption(options, flags) {
+  const days = parseNonNegativeSafeIntegerOption('days', options, flags, 30);
+  // Safe integers can still exceed JavaScript Date's representable range.
+  // Anchor the overflow check to the Unix epoch so the boundary is deterministic.
+  const fromMs = 0 - days * 24 * 60 * 60 * 1000;
+  if (Number.isNaN(new Date(fromMs).getTime())) {
+    throw new NansenError(
+      `--days is outside the supported date range; received: ${days}`,
+      ErrorCode.INVALID_PARAMS,
+    );
+  }
+  return days;
+}
+
 
 // Format a single value for table display
 export function formatValue(val) {
@@ -327,7 +384,7 @@ export function formatTable(data) {
   }
 
   // Get columns from first record, prioritize common useful fields
-  const priorityFields = ['token_symbol', 'token_name', 'symbol', 'name', 'address', 'label', 'chain', 'value_usd', 'amount', 'pnl_usd', 'price_usd', 'volume_usd', 'net_flow_usd', 'timestamp', 'block_timestamp'];
+  const priorityFields = ['token_symbol', 'token_name', 'symbol', 'name', 'wallet_address', 'address', 'label', 'chain', 'value_usd', 'amount', 'pnl_usd', 'price_usd', 'volume_usd', 'net_flow_usd', 'timestamp', 'block_timestamp'];
   const allKeys = [...new Set(records.flatMap(r => Object.keys(r)))];
 
   // Sort: priority fields first, then alphabetically
@@ -502,23 +559,51 @@ export function formatStream(data) {
  *          or already-parsed object {from, to}.
  * Falls back to days-based range if no date provided.
  */
-export function parseDateOption(dateOption, days = 30) {
-  if (dateOption) {
-    if (typeof dateOption === 'object' && dateOption.from) {
-      return dateOption;
-    }
-    if (typeof dateOption === 'string') {
-      // Simple date string: use as both from and to
-      const dateMatch = dateOption.match(/^\d{4}-\d{2}-\d{2}$/);
-      if (dateMatch) {
-        return { from: dateOption, to: dateOption };
-      }
+function isValidDateOnly(value) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+
+export function parseDateOption(dateOption, days = 30, valuelessDateFlag = false) {
+  if (valuelessDateFlag) {
+    throw new NansenError(
+      '--date requires a value in YYYY-MM-DD format or a JSON date range',
+      ErrorCode.INVALID_PARAMS,
+    );
+  }
+
+  if (dateOption === undefined) {
+    // Default: use days-based range only when --date was not supplied.
+    const to = new Date().toISOString().split('T')[0];
+    const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    return { from, to };
+  }
+
+  let parsedOption = dateOption;
+  if (typeof parsedOption === 'string' && !isValidDateOnly(parsedOption)) {
+    try {
+      parsedOption = JSON.parse(parsedOption);
+    } catch {
+      // Keep the original value so the actionable validation error below is used.
     }
   }
-  // Default: use days-based range
-  const to = new Date().toISOString().split('T')[0];
-  const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-  return { from, to };
+
+  if (typeof parsedOption === 'string' && isValidDateOnly(parsedOption)) {
+    return { from: parsedOption, to: parsedOption };
+  }
+
+  if (parsedOption && typeof parsedOption === 'object' && !Array.isArray(parsedOption)) {
+    const { from, to } = parsedOption;
+    if (isValidDateOnly(from) && (to === undefined || isValidDateOnly(to))) {
+      return { from, to: to ?? from };
+    }
+  }
+
+  throw new NansenError(
+    '--date must be YYYY-MM-DD or a JSON object with a valid "from" date and optional "to" date',
+    ErrorCode.INVALID_PARAMS,
+  );
 }
 
 // Enrich transfers with Nansen labels for from/to addresses
@@ -587,6 +672,35 @@ export function parseAddressList(raw) {
   }
 }
 
+/**
+ * Read an address list from a file: either a JSON array of address strings or
+ * one address per line. Shared by the profiler commands that accept --file.
+ */
+function readAddressFile(file) {
+  let content;
+  try {
+    content = fs.readFileSync(file, 'utf8');
+  } catch (err) {
+    throw new NansenError(
+      `Could not read --file ${file}: ${err.code === 'ENOENT' ? 'no such file' : err.message}`,
+      ErrorCode.INVALID_PARAMS
+    );
+  }
+  try {
+    const parsed = JSON.parse(content);
+    if (!Array.isArray(parsed) || !parsed.every(item => typeof item === 'string')) {
+      throw new NansenError(
+        'File must contain a JSON array of address strings or one address per line',
+        ErrorCode.INVALID_PARAMS
+      );
+    }
+    return parsed.map(a => a.trim()).filter(Boolean);
+  } catch (e) {
+    if (e instanceof NansenError) throw e;
+    return content.split('\n').map(a => a.trim()).filter(Boolean);
+  }
+}
+
 // ============= Composite Functions =============
 
 export async function batchProfile(api, params = {}) {
@@ -640,6 +754,17 @@ export async function batchProfile(api, params = {}) {
   return { results, total: addresses.length, completed: results.filter(r => !r.error).length };
 }
 
+function normalizeTraceDepth(raw) {
+  const value = parseSafeIntegerOption(
+    'depth',
+    { depth: raw },
+    {},
+    2,
+  );
+
+  return Math.max(1, Math.min(value, 5));
+}
+
 export async function traceCounterparties(api, params = {}) {
   let { address, chain = 'ethereum', depth = 2, width = 10, days = 30, delayMs = 1000 } = params;
   if (!address) {
@@ -660,7 +785,7 @@ export async function traceCounterparties(api, params = {}) {
   if (!validation.valid) {
     throw new NansenError(validation.error, ErrorCode.INVALID_ADDRESS);
   }
-  const clampedDepth = Math.max(1, Math.min(depth, 5));
+  const clampedDepth = normalizeTraceDepth(depth);
   const visited = new Set();
   const nodes = [];
   const edges = [];
@@ -779,7 +904,7 @@ COMMANDS:
   trade       DEX swaps/bridges: quote, execute, bridge-status, limit-order
   bridge      Hyperliquid bridge: quote, execute, status (EVM <-> HL)
   perp        Hyperliquid perps: order, cancel, close, leverage, positions
-  research    analytics: smart-money, profiler, token, search, perp, portfolio, points
+  research    analytics: smart-money, profiler, token, search, perp, portfolio
   wallet      create, list, show, export, default, delete, forget-password
   agent       Ask the Nansen AI research agent (fast/expert modes)
   alerts      list, create, update, toggle, delete
@@ -820,7 +945,7 @@ EXAMPLES:
   nansen research profiler balance --address 0x... --chain ethereum
 
 DEPRECATED ALIASES (still work, will be removed in a future version):
-  smart-money, profiler, token, search, perp, portfolio, points → use "nansen research <command>"
+  smart-money, profiler, token, search, perp, portfolio → use "nansen research <command>"
   quote, execute → use "nansen trade <command>"
 
 Research chains: ethereum, solana, base, bnb, arbitrum, polygon, optimism, avalanche, linea, scroll, mantle, ronin, sei, plasma, sonic, monad, hyperevm, iotaevm
@@ -982,8 +1107,14 @@ export function buildCommands(deps = {}) {
         'search': async () => {
           // Accept queries as positional args or --query (repeated)
           let queries = subArgs.length > 0 ? subArgs : [];
-          if (options.query) {
+          if (options.query !== undefined) {
             const fromOption = Array.isArray(options.query) ? options.query : [options.query];
+            if (!fromOption.every(q => typeof q === 'string')) {
+              throw new NansenError(
+                '--query values must be strings',
+                ErrorCode.INVALID_PARAMS,
+              );
+            }
             queries = queries.concat(fromOption);
           }
           queries = queries.filter(q => q.trim());
@@ -1008,7 +1139,7 @@ export function buildCommands(deps = {}) {
         'fetch': async () => {
           // Accept URLs as positional args or --url (repeated)
           let urls = subArgs.length > 0 ? subArgs : [];
-          if (options.url) {
+          if (options.url !== undefined) {
             const fromOption = Array.isArray(options.url) ? options.url : [options.url];
             urls = urls.concat(fromOption);
           }
@@ -1019,6 +1150,12 @@ export function buildCommands(deps = {}) {
             try { new URL(u); } catch {
               throw new NansenError(`Invalid URL: "${u}". URLs must include a scheme, e.g. https://example.com`, ErrorCode.INVALID_PARAMS);
             }
+          }
+          if (Array.isArray(options.question)) {
+            throw new NansenError('--question may only be specified once', ErrorCode.INVALID_PARAMS);
+          }
+          if (options.question !== undefined && typeof options.question !== 'string') {
+            throw new NansenError('--question must be a string', ErrorCode.INVALID_PARAMS);
           }
           if (!options.question || !options.question.trim()) {
             throw new NansenError('--question is required and cannot be blank. Usage: nansen web fetch https://example.com --question "What is this about?"', ErrorCode.MISSING_PARAM);
@@ -1262,6 +1399,9 @@ export function buildCommands(deps = {}) {
     },
 
     'smart-money': async (args, apiInstance, flags, options) => {
+      rejectBlankOption(options.days, 'days', '30');
+      rejectBlankOption(options.chain, 'chain', 'solana');
+      rejectBlankOption(options.chains, 'chains', 'solana');
       const subcommand = args[0] || 'help';
       const chain = options.chain || 'solana';
       const chains = options.chains || [chain];
@@ -1276,7 +1416,9 @@ export function buildCommands(deps = {}) {
           : [options.labels];
       }
 
-      const days = options.days ? parseInt(options.days) : 30;
+      const days = subcommand === 'historical-holdings'
+        ? parseDaysOption(options, flags)
+        : 30;
 
       const handlers = {
         'netflow': () => apiInstance.smartMoneyNetflow({ chains, filters, orderBy, pagination }),
@@ -1300,6 +1442,8 @@ export function buildCommands(deps = {}) {
     },
 
     'profiler': async (args, apiInstance, flags, options) => {
+      rejectBlankOption(options.days, 'days', '30');
+      rejectBlankOption(options.chain, 'chain', 'ethereum');
       const subcommand = args[0] || 'help';
       let address = options.address;
       const entityName = options.entity || options['entity-name'];
@@ -1320,17 +1464,30 @@ export function buildCommands(deps = {}) {
       const filters = options.filters || {};
       const orderBy = parseSort(options.sort, options['order-by']);
       const pagination = buildPagination(options);
-      const days = options.days ? parseInt(options.days) : 30;
+      const days = [
+        'transactions',
+        'pnl',
+        'historical-balances',
+        'counterparties',
+        'counterparties-batch',
+        'pnl-summary',
+        'perp-trades',
+        'dex-trades',
+        'trace',
+        'compare',
+      ].includes(subcommand)
+        ? parseDaysOption(options, flags)
+        : 30;
 
       const handlers = {
         'balance': () => apiInstance.addressBalance({ address, entityName, chain, filters, orderBy }),
         'labels': () => apiInstance.addressLabels({ address, chain, pagination }),
         'transactions': () => {
-          const date = parseDateOption(options.date, days);
+          const date = parseDateOption(options.date, days, flags.date);
           return apiInstance.addressTransactions({ address, chain, filters, orderBy, pagination, days, date });
         },
         'pnl': () => {
-          const date = parseDateOption(options.date, days);
+          const date = parseDateOption(options.date, days, flags.date);
           return apiInstance.addressPnl({ address, chain, date, days, filters, orderBy, pagination });
         },
         'search': () => apiInstance.entitySearch({ query: options.query }),
@@ -1338,42 +1495,46 @@ export function buildCommands(deps = {}) {
         'related-wallets': () => apiInstance.addressRelatedWallets({ address, chain, orderBy, pagination }),
         'first-funder': () => apiInstance.addressFirstFunder({ address }),
         'counterparties': () => apiInstance.addressCounterparties({ address, chain, filters, orderBy, pagination, days }),
+        'counterparties-batch': () => {
+          const addresses = options.addresses
+            ? parseAddressList(options.addresses)
+            : (options.file ? readAddressFile(options.file) : []);
+          return apiInstance.addressCounterpartiesBatch({ addresses, chain, filters, orderBy, pagination, days });
+        },
         'pnl-summary': () => apiInstance.addressPnlSummary({ address, chain, orderBy, pagination, days }),
         'perp-positions': () => apiInstance.addressPerpPositions({ address, filters, orderBy, pagination }),
         'perp-trades': () => apiInstance.addressPerpTrades({ address, filters, orderBy, pagination, days }),
         'dex-trades': () => {
-          const date = parseDateOption(options.date, days);
+          const date = parseDateOption(options.date, days, flags.date);
           return apiInstance.addressDexTrades({ address, chain, filters, orderBy, pagination, days, date });
         },
         'batch': () => {
+          rejectBlankOption(options.delay, 'delay', '1000');
           let addresses = [];
           if (options.addresses) {
             addresses = parseAddressList(options.addresses);
           } else if (options.file) {
-            const content = fs.readFileSync(options.file, 'utf8');
-            try {
-              const parsed = JSON.parse(content);
-              if (!Array.isArray(parsed)) {
-                throw new NansenError('File must contain a JSON array of address strings or one address per line', ErrorCode.INVALID_PARAMS);
-              }
-              if (!parsed.every(item => typeof item === 'string')) {
-                throw new NansenError('File must contain a JSON array of address strings or one address per line', ErrorCode.INVALID_PARAMS);
-              }
-              addresses = parsed.map(a => a.trim()).filter(Boolean);
-            } catch (e) {
-              if (e instanceof NansenError) throw e;
-              addresses = content.split('\n').map(a => a.trim()).filter(Boolean);
-            }
+            addresses = readAddressFile(options.file);
           }
           if (addresses.length > 100) {
             throw new NansenError('Batch is limited to 100 addresses', ErrorCode.INVALID_PARAMS);
           }
-          const include = options.include ? options.include.split(',').map(s => s.trim()) : ['labels', 'balance'];
+          const parsedInclude = parseCsvOption(options.include, 'include');
+          const include = (parsedInclude && parsedInclude.length > 0) ? parsedInclude : ['labels', 'balance'];
           const delayMs = options.delay ? parseInt(options.delay) : 1000;
           return batchProfile(apiInstance, { addresses, chain, include, delayMs });
         },
         'trace': () => {
-          const depth = options.depth ? Math.max(1, Math.min(parseInt(options.depth), 5)) : 2;
+          rejectBlankOption(options.delay, 'delay', '1000');
+          rejectBlankOption(options.depth, 'depth', '2');
+          rejectBlankOption(options.width, 'width', '10');
+          if (flags.depth) {
+            throw new NansenError(
+              '--depth requires a safe integer value',
+              ErrorCode.INVALID_PARAMS,
+            );
+          }
+          const depth = options.depth ?? 2;
           const width = options.width ? parseInt(options.width) : 10;
           const delayMs = options.delay ? parseInt(options.delay) : 1000;
           return traceCounterparties(apiInstance, { address, chain, depth, width, days, delayMs });
@@ -1383,7 +1544,7 @@ export function buildCommands(deps = {}) {
           return compareWallets(apiInstance, { addresses: addrs, chain, days });
         },
         'help': () => ({
-          commands: ['balance', 'labels', 'transactions', 'pnl', 'search', 'historical-balances', 'related-wallets', 'first-funder', 'counterparties', 'pnl-summary', 'perp-positions', 'perp-trades', 'dex-trades', 'batch', 'trace', 'compare'],
+          commands: ['balance', 'labels', 'transactions', 'pnl', 'search', 'historical-balances', 'related-wallets', 'first-funder', 'counterparties', 'counterparties-batch', 'pnl-summary', 'perp-positions', 'perp-trades', 'dex-trades', 'batch', 'trace', 'compare'],
           description: 'Wallet profiling endpoints',
           example: 'nansen research profiler compare --addresses "0xABC...,0xDEF..." --chain ethereum'
         })
@@ -1402,6 +1563,11 @@ export function buildCommands(deps = {}) {
     },
 
     'token': async (args, apiInstance, flags, options) => {
+      rejectBlankOption(options.days, 'days', '30');
+      rejectBlankOption(options.chain, 'chain', 'solana');
+      rejectBlankOption(options.chains, 'chains', 'solana');
+      rejectBlankOption(options.timeframe, 'timeframe', '1d');
+      rejectBlankOption(options['buy-or-sell'], 'buy-or-sell', 'SELL');
       const subcommand = args[0] || 'help';
       const chain = options.chain || 'solana';
       const tokenAddress = normalizeAddress(options.token || options['token-address'], chain);
@@ -1411,7 +1577,17 @@ export function buildCommands(deps = {}) {
       const filters = options.filters || {};
       const orderBy = parseSort(options.sort, options['order-by']);
       const pagination = buildPagination(options);
-      const days = options.days ? parseInt(options.days) : 30;
+      const days = [
+        'flows',
+        'dex-trades',
+        'pnl',
+        'who-bought-sold',
+        'transfers',
+        'perp-trades',
+        'perp-pnl-leaderboard',
+      ].includes(subcommand)
+        ? parseDaysOption(options, flags)
+        : 30;
 
       // Convenience filter for smart money only
       const onlySmartMoney = options['smart-money'] || flags['smart-money'] || false;
@@ -1455,7 +1631,7 @@ export function buildCommands(deps = {}) {
         },
         'holders': () => apiInstance.tokenHolders({ tokenAddress, chain, labelType: onlySmartMoney ? 'smart_money' : 'all_holders', filters, orderBy, pagination, withLabels: resolveBooleanOption(options, flags, 'premium-labels') }),
         'flows': () => {
-          const date = parseDateOption(options.date, days);
+          const date = parseDateOption(options.date, days, flags.date);
           const label = options.label;
           return apiInstance.tokenFlows({ tokenAddress, chain, label, filters, orderBy, pagination, days, date });
         },
@@ -1465,7 +1641,7 @@ export function buildCommands(deps = {}) {
           return apiInstance.tokenPnlLeaderboard({ tokenAddress, chain, filters, orderBy, pagination, days, withLabels });
         },
         'who-bought-sold': () => {
-          const date = parseDateOption(options.date, days);
+          const date = parseDateOption(options.date, days, flags.date);
           const buyOrSell = (options['buy-or-sell'] || 'BUY').toUpperCase();
           return apiInstance.tokenWhoBoughtSold({ tokenAddress, chain, buyOrSell, filters, orderBy, pagination, days, date });
         },
@@ -1553,24 +1729,21 @@ export function buildCommands(deps = {}) {
     },
 
     'perp': async (args, apiInstance, flags, options) => {
+      rejectBlankOption(options.days, 'days', '30');
       const subcommand = args[0] || 'help';
       const filters = options.filters || {};
       const orderBy = parseSort(options.sort, options['order-by']);
       const pagination = buildPagination(options);
-      const days = options.days ? parseInt(options.days) : 30;
+      const days = ['screener', 'leaderboard'].includes(subcommand)
+        ? parseDaysOption(options, flags)
+        : 30;
 
       const handlers = {
         'screener': () => {
           const traderType = options['trader-type'];
-          const sectorsFilter = options['sectors-filter']
-            ? options['sectors-filter'].split(',').map(s => s.trim()).filter(Boolean)
-            : undefined;
-          const smLabelFilter = options['sm-label-filter']
-            ? options['sm-label-filter'].split(',').map(s => s.trim()).filter(Boolean)
-            : undefined;
-          const traderLabelFilter = options['trader-label-filter']
-            ? options['trader-label-filter'].split(',').map(s => s.trim()).filter(Boolean)
-            : undefined;
+          const sectorsFilter = parseCsvOption(options['sectors-filter'], 'sectors-filter');
+          const smLabelFilter = parseCsvOption(options['sm-label-filter'], 'sm-label-filter');
+          const traderLabelFilter = parseCsvOption(options['trader-label-filter'], 'trader-label-filter');
           return apiInstance.perpScreener({ filters, orderBy, pagination, days, traderType, sectorsFilter, smLabelFilter, traderLabelFilter });
         },
         'leaderboard': () => {
@@ -1592,6 +1765,7 @@ export function buildCommands(deps = {}) {
     },
 
     'search': async (args, apiInstance, flags, options) => {
+      rejectBlankOption(options.chain, 'chain', 'solana');
       return apiInstance.generalSearch({
         query: args[0] || options.query,
         resultType: options.type,
@@ -1600,25 +1774,8 @@ export function buildCommands(deps = {}) {
       });
     },
 
-    'points': async (args, apiInstance, flags, options) => {
-      const subcommand = args[0] || 'help';
-      const tier = options.tier;
-      const pagination = buildPagination(options);
-
-      const handlers = {
-        'leaderboard': () => apiInstance.pointsLeaderboard({ tier, pagination }),
-        'help': () => ({
-          commands: ['leaderboard'],
-          description: 'Nansen Points analytics endpoints',
-          example: 'nansen points leaderboard --limit 100'
-        })
-      };
-
-      if (!handlers[subcommand]) {
-        return { error: `Unknown subcommand: ${subcommand}`, available: Object.keys(handlers) };
-      }
-
-      return handlers[subcommand]();
+    'points': async () => {
+      throw new CommandError('The points leaderboard endpoint has been removed. Run "nansen research" to explore other analytics commands.', 'COMMAND_UNAVAILABLE');
     },
 
     'prediction-market': async (args, apiInstance, flags, options) => {
@@ -1636,7 +1793,7 @@ export function buildCommands(deps = {}) {
 
       // Screener-specific filter options
       const isScreener = subcommand === 'market-screener' || subcommand === 'event-screener';
-      const tags = options.tags ? options.tags.split(',').map(t => t.trim()) : undefined;
+      const tags = parseCsvOption(options.tags, 'tags');
       const minLiquidity = isScreener ? parseFiniteNumberOption('min-liquidity', options, flags) : undefined;
       const maxLiquidity = isScreener ? parseFiniteNumberOption('max-liquidity', options, flags) : undefined;
       const minUniqueTraders24h = isScreener ? parseFiniteNumberOption('min-unique-traders-24h', options, flags) : undefined;
@@ -1832,7 +1989,7 @@ USAGE:
 }
 
 // Categories that moved under 'research'
-export const DEPRECATED_TO_RESEARCH = new Set(['smart-money', 'profiler', 'token', 'search', 'portfolio', 'points']);
+export const DEPRECATED_TO_RESEARCH = new Set(['smart-money', 'profiler', 'token', 'search', 'portfolio']);
 // Subcommands that moved under 'trade'
 export const DEPRECATED_TO_TRADE = new Set(['quote', 'execute']);
 
