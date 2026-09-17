@@ -71,7 +71,6 @@ describe('telemetry tracking for all first-level commands', () => {
     { category: 'token',       sub: 'screener' },
     { category: 'search',      sub: 'search', extraOpts: ['--query', 'bitcoin'] },
     { category: 'portfolio',   sub: 'current', extraOpts: ['--address', '0x1234'] },
-    { category: 'points',      sub: 'leaderboard' },
     { category: 'prediction-market', sub: 'market-screener' },
   ];
 
@@ -90,6 +89,42 @@ describe('telemetry tracking for all first-level commands', () => {
       expect(wasTracked()).toBe(1);
       expect(trackSucceeded).toHaveBeenCalledOnce();
     });
+  }
+
+  for (const command of [['points', 'leaderboard'], ['research', 'points', 'leaderboard']]) {
+    for (const flags of [[], ['--fields', 'data'], ['--stream']]) {
+      it(`${[...command, ...flags].join(' ')} reports unavailability as a failure without calling the API`, async () => {
+        const output = vi.fn();
+        const exit = vi.fn();
+        const request = vi.fn();
+        const pointsLeaderboard = vi.fn();
+        function UnavailableAPI() {
+          return { request, pointsLeaderboard };
+        }
+
+        const result = await runCLI([...command, ...flags], baseDeps({
+          NansenAPIClass: UnavailableAPI,
+          output,
+          exit,
+        }));
+
+        expect(result.type).toBe('error');
+        expect(output).toHaveBeenCalledOnce();
+        expect(JSON.parse(output.mock.calls[0][0])).toMatchObject({
+          success: false,
+          error: 'The points leaderboard endpoint has been removed. Run "nansen research" to explore other analytics commands.',
+          code: 'COMMAND_UNAVAILABLE',
+        });
+        expect(exit).toHaveBeenCalledExactlyOnceWith(1);
+        expect(request).not.toHaveBeenCalled();
+        expect(pointsLeaderboard).not.toHaveBeenCalled();
+        expect(trackSucceeded).not.toHaveBeenCalled();
+        expect(trackFailed).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+          command: command.slice(0, 2).join(' '),
+          error_code: 'COMMAND_UNAVAILABLE',
+        }));
+      });
+    }
   }
 
   // ── Operational commands ──

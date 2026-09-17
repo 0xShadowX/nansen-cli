@@ -54,7 +54,9 @@ nansen mcp install <client>           # add the Nansen MCP server to Claude Code
 nansen schema [command] [--pretty]    # full command reference (no API key needed)
 ```
 
-**Research categories:** `smart-money` (`sm`), `token` (`tgm`), `profiler` (`prof`), `portfolio` (`port`), `prediction-market` (`pm`), `search`, `perp`, `points`
+**Research categories:** `smart-money` (`sm`), `token` (`tgm`), `profiler` (`prof`), `portfolio` (`port`), `prediction-market` (`pm`), `search`, `perp`
+
+The points leaderboard API has been removed. `nansen research points leaderboard` and its deprecated alias `nansen points leaderboard` return `success: false` with code `COMMAND_UNAVAILABLE` and exit status `1`, without making an API request.
 
 **Trade:** `quote`, `execute`, `bridge-status`, `limit-order` — DEX swaps on Solana and Base, cross-chain bridges, and Solana limit orders.
 
@@ -301,6 +303,7 @@ nansen research smart-money netflow --chain solana --fields token_symbol,net_flo
 | `RATE_LIMITED` | Auto-retried by CLI. `details.rateLimit.resetSeconds` is how long the window needs to drain. |
 | `UNSUPPORTED_FILTER` | Remove the filter and retry. |
 | `SERVER_ERROR` | Not your fault. Quote `details.requestId` when reporting it. |
+| `COMMAND_UNAVAILABLE` | The command is no longer available. For points leaderboard, run `nansen research` to explore other analytics commands. |
 
 **Error metadata.** When the API reports them, `details` carries:
 

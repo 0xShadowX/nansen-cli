@@ -1541,9 +1541,9 @@ export function buildCommands(deps = {}) {
       });
     },
 
-    'points': async () => ({
-      error: 'The points leaderboard endpoint is no longer available.'
-    }),
+    'points': async () => {
+      throw new CommandError('The points leaderboard endpoint has been removed. Run "nansen research" to explore other analytics commands.', 'COMMAND_UNAVAILABLE');
+    },
 
     'prediction-market': async (args, apiInstance, flags, options) => {
       if (Date.now() < new Date('2026-03-16T00:00:00Z').getTime()) {
