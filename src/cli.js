@@ -505,7 +505,7 @@ export function parseDateOption(dateOption, days = 30, valuelessDateFlag = false
   if (parsedOption && typeof parsedOption === 'object' && !Array.isArray(parsedOption)) {
     const { from, to } = parsedOption;
     if (isValidDateOnly(from) && (to === undefined || isValidDateOnly(to))) {
-      return parsedOption;
+      return { from, to: to ?? from };
     }
   }
 
