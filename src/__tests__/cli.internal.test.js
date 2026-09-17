@@ -4242,7 +4242,8 @@ describe('profiler counterparties-batch command', () => {
     const batch = SCHEMA.commands.research.subcommands['profiler'].subcommands['counterparties-batch'];
     expect(batch).toBeDefined();
     expect(batch.endpoint).toBe('/api/v1/profiler/address/counterparties/batch');
-    expect(batch.options.addresses.required).toBe(true);
+    expect(batch.options.addresses.required).toBeUndefined();
+    expect(batch.options.addresses.description).toContain('--file <path>');
     expect(batch.options.days.default).toBe(30);
     // The dispatch default is 'all', so the schema must document that, not 'ethereum'
     expect(batch.options.chain.default).toBe('all');

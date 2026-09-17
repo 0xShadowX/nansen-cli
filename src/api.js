@@ -447,7 +447,7 @@ export function validateTokenAddress(tokenAddress, chain = 'solana') {
  */
 function requireValidAddress(address, chain) {
   const v = validateAddress(address, chain);
-  if (!v.valid) throw new NansenError(v.error, v.code);
+  if (!v.valid) throw new NansenError(`Invalid address "${address}" for chain "${chain}": ${v.error}`, v.code);
 }
 
 /**
@@ -1254,6 +1254,12 @@ export class NansenAPI {
    */
   async addressCounterpartiesBatch(params = {}) {
     const { addresses, chain = 'all', filters = {}, orderBy, pagination, days = 30, sourceInput } = params;
+    if (!['all', 'solana', ...EVM_CHAINS].includes(chain)) {
+      throw new NansenError(
+        `Unsupported chain "${chain}". Supported chains: all, solana, ${EVM_CHAINS.join(', ')}.`,
+        ErrorCode.INVALID_PARAMS
+      );
+    }
     const list = Array.isArray(addresses) ? addresses : (addresses ? [addresses] : []);
     // Dedupe on the normalised form, because the server lowercases EVM addresses
     // before deduping: a checksum-cased repeat must not count twice against the
@@ -1267,7 +1273,7 @@ export class NansenAPI {
 
     if (walletAddresses.length === 0) {
       throw new NansenError(
-        'At least one wallet address is required. Pass --addresses "0xabc,0xdef"',
+        'At least one wallet address is required. Pass --addresses "0xabc,0xdef" or --file <path>',
         ErrorCode.MISSING_PARAM
       );
     }
@@ -1292,7 +1298,7 @@ export class NansenAPI {
       const ecosystems = new Set(walletAddresses.map(classifyAutoDetectedAddress));
       if (ecosystems.size > 1) {
         throw new NansenError(
-          "A batch cannot mix EVM and Solana addresses. Query them in separate requests (chain='all' for EVM, chain='solana' for Solana).",
+          "A batch cannot mix EVM and Solana addresses. Query each ecosystem separately; chain='all' auto-detects either ecosystem.",
           ErrorCode.INVALID_PARAMS
         );
       }

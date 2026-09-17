@@ -1247,7 +1247,7 @@ describe('NansenAPI', () => {
             addresses: [WALLET_A, TEST_DATA.solana.address],
             chain: 'all'
           })
-        ).rejects.toThrow(/cannot mix EVM and Solana addresses/);
+        ).rejects.toThrow(/chain='all' auto-detects either ecosystem/);
         expectNoFetch();
       });
 
@@ -1261,7 +1261,14 @@ describe('NansenAPI', () => {
       it('should reject a malformed address for a named chain', async () => {
         await expect(
           api.addressCounterpartiesBatch({ addresses: [WALLET_A, 'not-an-address'], chain: 'ethereum' })
-        ).rejects.toThrow(/Invalid EVM address format/);
+        ).rejects.toThrow(/Invalid address "not-an-address" for chain "ethereum": Invalid EVM address format/);
+        expectNoFetch();
+      });
+
+      it('should reject an unsupported named chain before sending addresses', async () => {
+        await expect(
+          api.addressCounterpartiesBatch({ addresses: ['arbitrary-file-line'], chain: 'bsc' })
+        ).rejects.toThrow(/Unsupported chain "bsc"/);
         expectNoFetch();
       });
 
@@ -1280,7 +1287,7 @@ describe('NansenAPI', () => {
       it('should require at least one address', async () => {
         await expect(
           api.addressCounterpartiesBatch({ addresses: [], chain: 'ethereum' })
-        ).rejects.toThrow(/At least one wallet address is required/);
+        ).rejects.toThrow(/--addresses .* or --file <path>/);
         expectNoFetch();
       });
 

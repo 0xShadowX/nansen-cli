@@ -577,12 +577,11 @@
               "options": {
                 "addresses": {
                   "type": "string",
-                  "required": true,
-                  "description": "Comma-separated list (or JSON array) of up to 10 distinct wallet addresses"
+                  "description": "Comma-separated list (or JSON array) of up to 10 distinct wallet addresses; required unless --file <path> is provided"
                 },
                 "file": {
                   "type": "string",
-                  "description": "Read the addresses from a file instead: a JSON array of addresses, or one address per line"
+                  "description": "Read addresses from this file instead of --addresses: a JSON array of addresses, or one address per line"
                 },
                 "chain": {
                   "type": "string",
