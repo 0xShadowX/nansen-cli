@@ -1305,6 +1305,7 @@ export function buildCommands(deps = {}) {
         'pnl',
         'historical-balances',
         'counterparties',
+        'counterparties-batch',
         'pnl-summary',
         'perp-trades',
         'dex-trades',
