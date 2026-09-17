@@ -4297,7 +4297,7 @@ describe('profiler trace command', () => {
     const trace = SCHEMA.commands.research.subcommands['profiler'].subcommands['trace'];
     expect(trace).toBeDefined();
     expect(trace.options.address.required).toBe(true);
-    expect(trace.options.depth).toBeDefined();
+    expect(trace.options.depth).toMatchObject({ type: 'integer' });
     expect(trace.options.width).toBeDefined();
   });
 
@@ -4337,6 +4337,56 @@ describe('profiler trace command', () => {
       delay: '0'
     });
     expect(result2.depth).toBe(1);
+  });
+
+  it.each(['abc', '2.5', 'Infinity', '9007199254740992'])(
+    'should reject malformed --depth value %s before querying counterparties',
+    async (depth) => {
+      const mockApi = {
+        addressCounterparties: vi.fn().mockResolvedValue({ counterparties: [] }),
+      };
+      const commands = buildCommands({});
+
+      await expect(commands['profiler'](['trace'], mockApi, {}, {
+        address: '0x0000000000000000000000000000000000000001',
+        depth,
+        delay: '0',
+      })).rejects.toMatchObject({
+        code: ErrorCode.INVALID_PARAMS,
+        message: `--depth must be a safe integer; received: ${depth}`,
+      });
+
+      expect(mockApi.addressCounterparties).not.toHaveBeenCalled();
+    },
+  );
+
+  it('should reject repeated valued --depth options clearly', async () => {
+    const mockApi = {
+      addressCounterparties: vi.fn().mockResolvedValue({ counterparties: [] }),
+    };
+    const commands = buildCommands({});
+
+    await expect(commands['profiler'](['trace'], mockApi, {}, {
+      address: '0x0000000000000000000000000000000000000001',
+      depth: ['2', '3'],
+      delay: '0',
+    })).rejects.toThrow('--depth may only be specified once');
+
+    expect(mockApi.addressCounterparties).not.toHaveBeenCalled();
+  });
+
+  it('should reject bare --depth instead of silently using the default', async () => {
+    const mockApi = {
+      addressCounterparties: vi.fn().mockResolvedValue({ counterparties: [] }),
+    };
+    const commands = buildCommands({});
+
+    await expect(commands['profiler'](['trace'], mockApi, { depth: true }, {
+      address: '0x0000000000000000000000000000000000000001',
+      delay: '0',
+    })).rejects.toThrow('--depth requires a safe integer value');
+
+    expect(mockApi.addressCounterparties).not.toHaveBeenCalled();
   });
 
   it('should be listed in profiler help', async () => {

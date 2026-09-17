@@ -773,9 +773,9 @@
                   "description": "Chain to profile the address on"
                 },
                 "depth": {
-                  "type": "number",
+                  "type": "integer",
                   "default": 2,
-                  "description": "Hops to follow from the starting address (1-5)"
+                  "description": "Hops to follow from the starting address (1-5); valid integers outside the range are clamped"
                 },
                 "width": {
                   "type": "number",
