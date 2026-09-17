@@ -14,7 +14,7 @@ import { buildAgentCommands } from './commands/agent.js';
 import { buildMcpCommands } from './commands/mcp.js';
 import { buildCompletionCommands } from './commands/completion.js';
 import { buildResearchCommands, RESEARCH_HISTORICAL_SUBCOMMANDS, RESEARCH_SUBCOMMANDS } from './commands/research.js';
-import { buildPagination, parseSort } from './query-options.js';
+import { buildPagination, parseSort, parseCsvOption } from './query-options.js';
 export { buildPagination, parseSort };
 import { resolveAddress, isEnsName } from './ens.js';
 import { compareSemver } from './semver.js';
@@ -114,7 +114,10 @@ export function filterFields(data, fields) {
  * Parse comma-separated fields string
  */
 export function parseFields(fieldsOption) {
-  if (!fieldsOption) return null;
+  if (fieldsOption === undefined || fieldsOption === '') return null;
+  if (typeof fieldsOption !== 'string') {
+    throw new NansenError('--fields must be a comma-separated string', ErrorCode.INVALID_PARAMS);
+  }
   return fieldsOption.split(',').map(f => f.trim()).filter(f => f.length > 0);
 }
 
@@ -1368,7 +1371,8 @@ export function buildCommands(deps = {}) {
           if (addresses.length > 100) {
             throw new NansenError('Batch is limited to 100 addresses', ErrorCode.INVALID_PARAMS);
           }
-          const include = options.include ? options.include.split(',').map(s => s.trim()) : ['labels', 'balance'];
+          const parsedInclude = parseCsvOption(options.include, 'include');
+          const include = (parsedInclude && parsedInclude.length > 0) ? parsedInclude : ['labels', 'balance'];
           const delayMs = options.delay ? parseInt(options.delay) : 1000;
           return batchProfile(apiInstance, { addresses, chain, include, delayMs });
         },
@@ -1562,15 +1566,9 @@ export function buildCommands(deps = {}) {
       const handlers = {
         'screener': () => {
           const traderType = options['trader-type'];
-          const sectorsFilter = options['sectors-filter']
-            ? options['sectors-filter'].split(',').map(s => s.trim()).filter(Boolean)
-            : undefined;
-          const smLabelFilter = options['sm-label-filter']
-            ? options['sm-label-filter'].split(',').map(s => s.trim()).filter(Boolean)
-            : undefined;
-          const traderLabelFilter = options['trader-label-filter']
-            ? options['trader-label-filter'].split(',').map(s => s.trim()).filter(Boolean)
-            : undefined;
+          const sectorsFilter = parseCsvOption(options['sectors-filter'], 'sectors-filter');
+          const smLabelFilter = parseCsvOption(options['sm-label-filter'], 'sm-label-filter');
+          const traderLabelFilter = parseCsvOption(options['trader-label-filter'], 'trader-label-filter');
           return apiInstance.perpScreener({ filters, orderBy, pagination, days, traderType, sectorsFilter, smLabelFilter, traderLabelFilter });
         },
         'leaderboard': () => {
@@ -1635,7 +1633,7 @@ export function buildCommands(deps = {}) {
       const pagination = buildPagination(options);
 
       // Screener-specific filter options
-      const tags = options.tags ? options.tags.split(',').map(t => t.trim()) : undefined;
+      const tags = parseCsvOption(options.tags, 'tags');
       const minLiquidity = options['min-liquidity'] != null ? Number(options['min-liquidity']) : undefined;
       const maxLiquidity = options['max-liquidity'] != null ? Number(options['max-liquidity']) : undefined;
       const minUniqueTraders24h = options['min-unique-traders-24h'] != null ? Number(options['min-unique-traders-24h']) : undefined;

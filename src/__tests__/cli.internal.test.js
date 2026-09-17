@@ -3149,6 +3149,40 @@ describe('SCHEMA', () => {
     expect(trades.options.address.required).toBe(true);
   });
 
+  it('splits --tags CSV into an array for market-screener', async () => {
+    const mockApi = { pmMarketScreener: vi.fn().mockResolvedValue({ markets: [] }) };
+    const commands = buildCommands({});
+    await commands['prediction-market'](['market-screener'], mockApi, {}, { tags: 'defi,nft' });
+    expect(mockApi.pmMarketScreener).toHaveBeenCalledWith(expect.objectContaining({
+      tags: ['defi', 'nft'],
+    }));
+  });
+
+  it('rejects non-string --tags (JSON-primitive) with INVALID_PARAMS instead of crashing', async () => {
+    const mockApi = { pmMarketScreener: vi.fn().mockResolvedValue({ markets: [] }) };
+    const commands = buildCommands({});
+    await expect(
+      commands['prediction-market'](['market-screener'], mockApi, {}, { tags: true })
+    ).rejects.toMatchObject({ code: ErrorCode.INVALID_PARAMS });
+  });
+
+  it('accepts a repeated --tags flag (parseArgs array) instead of rejecting it as non-string', async () => {
+    const mockApi = { pmMarketScreener: vi.fn().mockResolvedValue({ markets: [] }) };
+    const commands = buildCommands({});
+    await commands['prediction-market'](['market-screener'], mockApi, {}, { tags: ['defi', 'nft'] });
+    expect(mockApi.pmMarketScreener).toHaveBeenCalledWith(expect.objectContaining({
+      tags: ['defi', 'nft'],
+    }));
+  });
+
+  it('rejects a non-string element in a repeated --tags flag', async () => {
+    const mockApi = { pmMarketScreener: vi.fn().mockResolvedValue({ markets: [] }) };
+    const commands = buildCommands({});
+    await expect(
+      commands['prediction-market'](['market-screener'], mockApi, {}, { tags: ['defi', true] })
+    ).rejects.toMatchObject({ code: ErrorCode.INVALID_PARAMS });
+  });
+
   // Note: returns removed in minimal schema (skills document output fields)
 
   it('should include option defaults', () => {
@@ -3277,6 +3311,21 @@ describe('parseFields', () => {
   it('should handle single field', () => {
     const result = parseFields('address');
     expect(result).toEqual(['address']);
+  });
+
+  it('rejects a non-string value (JSON-primitive) with INVALID_PARAMS instead of crashing', () => {
+    expect(() => parseFields(true)).toThrowError(
+      expect.objectContaining({ code: ErrorCode.INVALID_PARAMS })
+    );
+  });
+
+  it('rejects falsy non-string values (--fields false / --fields null) instead of silently returning null', () => {
+    expect(() => parseFields(false)).toThrowError(
+      expect.objectContaining({ code: ErrorCode.INVALID_PARAMS })
+    );
+    expect(() => parseFields(null)).toThrowError(
+      expect.objectContaining({ code: ErrorCode.INVALID_PARAMS })
+    );
   });
 });
 
@@ -4136,6 +4185,51 @@ describe('profiler batch command', () => {
     const commands = buildCommands({});
     const result = await commands['profiler'](['help'], null, {}, {});
     expect(result.commands).toContain('batch');
+  });
+
+  it('rejects non-string --include (JSON-primitive) with INVALID_PARAMS instead of crashing', async () => {
+    const mockApi = {
+      addressLabels: vi.fn().mockResolvedValue({ labels: [] }),
+      addressBalance: vi.fn().mockResolvedValue({ balances: [] }),
+    };
+    const commands = buildCommands({});
+    await expect(
+      commands['profiler'](['batch'], mockApi, {}, {
+        addresses: '0x0000000000000000000000000000000000000001',
+        include: true,
+        delay: '0'
+      })
+    ).rejects.toMatchObject({ code: ErrorCode.INVALID_PARAMS });
+  });
+
+  it('falls back to the default include (labels,balance) for an empty --include, not an empty set', async () => {
+    const mockApi = {
+      addressLabels: vi.fn().mockResolvedValue({ labels: [] }),
+      addressBalance: vi.fn().mockResolvedValue({ balances: [] }),
+    };
+    const commands = buildCommands({});
+    await commands['profiler'](['batch'], mockApi, {}, {
+      addresses: '0x0000000000000000000000000000000000000001',
+      include: '',
+      delay: '0'
+    });
+    expect(mockApi.addressLabels).toHaveBeenCalled();
+    expect(mockApi.addressBalance).toHaveBeenCalled();
+  });
+
+  it('falls back to the default include for an all-commas --include (splits to blank tokens)', async () => {
+    const mockApi = {
+      addressLabels: vi.fn().mockResolvedValue({ labels: [] }),
+      addressBalance: vi.fn().mockResolvedValue({ balances: [] }),
+    };
+    const commands = buildCommands({});
+    await commands['profiler'](['batch'], mockApi, {}, {
+      addresses: '0x0000000000000000000000000000000000000001',
+      include: ',,',
+      delay: '0'
+    });
+    expect(mockApi.addressLabels).toHaveBeenCalled();
+    expect(mockApi.addressBalance).toHaveBeenCalled();
   });
 });
 
@@ -5215,6 +5309,23 @@ describe('web search subcommand', () => {
     expect(mockApi.webSearch).toHaveBeenCalledWith({ queries: ['btc news', 'eth news'], numResults: undefined });
   });
 
+  it('handles --query as a JSON array (single flag parsed to an array)', async () => {
+    // parseArgs JSON.parses option values, so `--query '["btc","eth"]'` arrives
+    // here as an actual array, same shape as a repeated --query flag.
+    await webCmd([], { query: ['btc', 'eth'] });
+    expect(mockApi.webSearch).toHaveBeenCalledWith({ queries: ['btc', 'eth'], numResults: undefined });
+  });
+
+  it('rejects --query as a JSON object with INVALID_PARAMS', async () => {
+    // `--query '{"a":1}'` is JSON.parsed to a plain object before cli.js sees it.
+    await expect(webCmd([], { query: { a: 1 } })).rejects.toThrow('--query values must be strings');
+  });
+
+  it('rejects --query as a JSON array of non-strings with INVALID_PARAMS', async () => {
+    // `--query '[1,2]'` is JSON.parsed to an array of numbers.
+    await expect(webCmd([], { query: [1, 2] })).rejects.toThrow('--query values must be strings');
+  });
+
   it('passes --num-results as numResults (parsed as int)', async () => {
     await webCmd(['bitcoin'], { 'num-results': '5' });
     expect(mockApi.webSearch).toHaveBeenCalledWith({ queries: ['bitcoin'], numResults: 5 });
@@ -5675,5 +5786,49 @@ describe('perp screener CLI handler - new filters (ECINT-6680)', () => {
       smLabelFilter: ['30D Smart Trader'],
       traderLabelFilter: ['HL Perps Whale'],
     }));
+  });
+
+  it('rejects non-string sectors-filter (JSON-primitive) with INVALID_PARAMS instead of crashing', async () => {
+    await expect(
+      commands['perp'](['screener'], mockApi, {}, { 'sectors-filter': true })
+    ).rejects.toMatchObject({ code: ErrorCode.INVALID_PARAMS });
+  });
+
+  it('accepts a repeated --sectors-filter flag (parseArgs array) instead of rejecting it as non-string', async () => {
+    await commands['perp'](['screener'], mockApi, {}, { 'sectors-filter': ['Crypto:AI', 'Crypto:DeFi'] });
+    expect(mockApi.perpScreener).toHaveBeenCalledWith(expect.objectContaining({
+      sectorsFilter: ['Crypto:AI', 'Crypto:DeFi'],
+    }));
+  });
+
+  it('rejects a non-string element in a repeated --sectors-filter flag', async () => {
+    await expect(
+      commands['perp'](['screener'], mockApi, {}, { 'sectors-filter': ['Crypto:AI', true] })
+    ).rejects.toMatchObject({ code: ErrorCode.INVALID_PARAMS });
+  });
+
+  it('trims whitespace and drops blank entries in a repeated --sectors-filter flag, matching the CSV-string path', async () => {
+    await commands['perp'](['screener'], mockApi, {}, { 'sectors-filter': [' Crypto:AI ', '', 'Crypto:DeFi'] });
+    expect(mockApi.perpScreener).toHaveBeenCalledWith(expect.objectContaining({
+      sectorsFilter: ['Crypto:AI', 'Crypto:DeFi'],
+    }));
+  });
+
+  it('rejects non-string sm-label-filter (JSON-primitive) with INVALID_PARAMS instead of crashing', async () => {
+    await expect(
+      commands['perp'](['screener'], mockApi, {}, { 'sm-label-filter': true })
+    ).rejects.toMatchObject({ code: ErrorCode.INVALID_PARAMS });
+  });
+
+  it('rejects non-string trader-label-filter (JSON-primitive) with INVALID_PARAMS instead of crashing', async () => {
+    await expect(
+      commands['perp'](['screener'], mockApi, {}, { 'trader-label-filter': true })
+    ).rejects.toMatchObject({ code: ErrorCode.INVALID_PARAMS });
+  });
+
+  it('treats an empty --sectors-filter as "no filter" (undefined), not an empty-array filter', async () => {
+    await commands['perp'](['screener'], mockApi, {}, { 'sectors-filter': '' });
+    const call = mockApi.perpScreener.mock.calls[0][0];
+    expect(call.sectorsFilter).toBeUndefined();
   });
 });
