@@ -25,6 +25,17 @@ describe('parseDateOption validation', () => {
     });
   });
 
+  it('normalizes a from-only date range to a single day', () => {
+    expect(parseDateOption({ from: '2026-09-17' })).toEqual({
+      from: '2026-09-17',
+      to: '2026-09-17',
+    });
+    expect(parseDateOption('{"from":"2026-09-17"}')).toEqual({
+      from: '2026-09-17',
+      to: '2026-09-17',
+    });
+  });
+
   it.each([
     'not-a-date',
     '2026-02-30',
