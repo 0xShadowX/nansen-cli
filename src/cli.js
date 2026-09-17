@@ -385,21 +385,30 @@ export function formatCsv(data) {
   return lines.join('\n');
 }
 
+// Render the error envelope for the non-JSON formats. CSV gets a real header
+// row plus one record so the envelope stays machine-parseable; table keeps the
+// leading `Error:` line and follows it with one `key: value` line per field, so
+// code, status and details are not dropped on the way to the terminal.
+function formatErrorText(data, { csv = false } = {}) {
+  if (csv) return formatCsv(data);
+  const lines = [`Error: ${data.error}`];
+  for (const [key, val] of Object.entries(data)) {
+    if (key === 'success' || key === 'error' || val == null) continue;
+    lines.push(`${key}: ${typeof val === 'object' ? JSON.stringify(val) : val}`);
+  }
+  return lines.join('\n');
+}
+
 // Format output data (returns string, does not print)
 export function formatOutput(data, { pretty = false, table = false, csv = false } = {}) {
-  if (csv) {
+  if (csv || table) {
     if (data.success === false) {
-      return { type: 'error', text: `Error: ${data.error}` };
+      return { type: 'error', text: formatErrorText(data, { csv }) };
     }
-    const csvData = data.data || data;
-    return { type: 'csv', text: formatCsv(csvData) };
-  } else if (table) {
-    if (data.success === false) {
-      return { type: 'error', text: `Error: ${data.error}` };
-    } else {
-      const tableData = data.data || data;
-      return { type: 'table', text: formatTable(tableData) };
-    }
+    const body = data.data || data;
+    return csv
+      ? { type: 'csv', text: formatCsv(body) }
+      : { type: 'table', text: formatTable(body) };
   } else if (pretty) {
     return { type: 'json', text: JSON.stringify(data, null, 2) };
   } else {
