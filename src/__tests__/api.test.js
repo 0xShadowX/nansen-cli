@@ -9,7 +9,13 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, it, expect, beforeAll, vi } from 'vitest';
-import { NansenAPI, ErrorCode, clearCache } from '../api.js';
+import {
+  NansenAPI,
+  ErrorCode,
+  clearCache,
+  COUNTERPARTIES_BATCH_MAX_ADDRESSES,
+  COUNTERPARTIES_BATCH_MAX_DAYS
+} from '../api.js';
 
 const LIVE_TEST = process.env.NANSEN_LIVE_TEST === '1';
 const API_KEY = process.env.NANSEN_API_KEY || 'test-key';
@@ -149,6 +155,18 @@ const MOCK_RESPONSES = {
   addressCounterparties: {
     counterparties: [
       { address: '0x789', volume_usd: 100000 }
+    ]
+  },
+  addressCounterpartiesBatch: {
+    pagination: { page: 1, per_page: 10, total_pages: 1 },
+    data: [
+      {
+        wallet_address: '0x28c6c06298d514db089934071355e5743bf21d60',
+        counterparty_address: '0x789',
+        chain: 'ethereum',
+        interaction_count: 12,
+        total_volume_usd: 100000
+      }
     ]
   },
   addressPnlSummary: {
@@ -1116,6 +1134,199 @@ describe('NansenAPI', () => {
         expect(body.pagination.page).toBe(1);
         // Assert the legacy field name is NOT used
         expect(body.pagination.recordsPerPage).toBeUndefined();
+      });
+    });
+
+    describe('addressCounterpartiesBatch', () => {
+      const WALLET_A = TEST_DATA.ethereum.address;
+      const WALLET_B = '0x21a31ee1afc51d94c2efccaa2092ad1028285549';
+      const checksumCased = addr => '0x' + addr.slice(2).toUpperCase();
+      const evmAddresses = count => Array.from(
+        { length: count },
+        (_, i) => `0x${String(i + 1).padStart(40, '0')}`
+      );
+      // Client-side guards must reject before anything is sent
+      const expectNoFetch = () => {
+        if (LIVE_TEST) return;
+        expect(mockFetch).not.toHaveBeenCalled();
+      };
+
+      it('should post wallet_addresses, chain, date and pagination to the batch endpoint', async () => {
+        setupMock(MOCK_RESPONSES.addressCounterpartiesBatch);
+
+        const result = await api.addressCounterpartiesBatch({
+          addresses: [WALLET_A, WALLET_B],
+          chain: 'ethereum',
+          days: 7,
+          pagination: { page: 1, per_page: 2 }
+        });
+
+        const body = expectFetchCalledWith('/api/v1/profiler/address/counterparties/batch');
+        expect(body.wallet_addresses).toEqual([WALLET_A, WALLET_B]);
+        expect(body.chain).toBe('ethereum');
+        expect(body.pagination).toEqual({ page: 1, per_page: 2 });
+        expect(body.date.from).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+        expect(body.date.to).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+        // The request model rejects unknown fields, so nothing else may be sent
+        expect(Object.keys(body).sort()).toEqual(['chain', 'date', 'pagination', 'wallet_addresses']);
+
+        expect(result.data[0]).toHaveProperty('wallet_address', WALLET_A);
+      });
+
+      it('should default to chain "all" when the caller omits it', async () => {
+        setupMock(MOCK_RESPONSES.addressCounterpartiesBatch);
+
+        await api.addressCounterpartiesBatch({ addresses: [WALLET_A] });
+
+        const body = expectFetchCalledWith('/api/v1/profiler/address/counterparties/batch');
+        // Must match the CLI dispatch default, or a library caller silently
+        // gets a different chain than the documented one
+        expect(body.chain).toBe('all');
+        // 'all' still normalises EVM casing for the dedupe key
+        expect(body.wallet_addresses).toEqual([WALLET_A]);
+      });
+
+      it('should send source_input, filters and order_by only when provided', async () => {
+        setupMock(MOCK_RESPONSES.addressCounterpartiesBatch);
+
+        await api.addressCounterpartiesBatch({
+          addresses: [WALLET_A],
+          chain: 'ethereum',
+          sourceInput: 'Tokens',
+          filters: { total_volume_usd: { min: 1000 } },
+          orderBy: [{ field: 'total_volume_usd', direction: 'DESC' }]
+        });
+
+        const body = expectFetchCalledWith('/api/v1/profiler/address/counterparties/batch');
+        expect(body.source_input).toBe('Tokens');
+        expect(body.filters).toEqual({ total_volume_usd: { min: 1000 } });
+        expect(body.order_by).toEqual([{ field: 'total_volume_usd', direction: 'DESC' }]);
+      });
+
+      it('should dedupe on the normalized address, not the raw string', async () => {
+        setupMock(MOCK_RESPONSES.addressCounterpartiesBatch);
+
+        await api.addressCounterpartiesBatch({
+          addresses: [WALLET_A, ` ${checksumCased(WALLET_A)} `, WALLET_B],
+          chain: 'ethereum'
+        });
+
+        const body = expectFetchCalledWith('/api/v1/profiler/address/counterparties/batch');
+        expect(body.wallet_addresses).toEqual([WALLET_A, WALLET_B]);
+      });
+
+      it('should not count a checksum-cased repeat against the address limit', async () => {
+        setupMock(MOCK_RESPONSES.addressCounterpartiesBatch);
+        const atLimit = evmAddresses(COUNTERPARTIES_BATCH_MAX_ADDRESSES);
+
+        await api.addressCounterpartiesBatch({
+          addresses: [...atLimit, checksumCased(atLimit[0])],
+          chain: 'ethereum'
+        });
+
+        const body = expectFetchCalledWith('/api/v1/profiler/address/counterparties/batch');
+        expect(body.wallet_addresses).toHaveLength(COUNTERPARTIES_BATCH_MAX_ADDRESSES);
+      });
+
+      it('should send Solana-only batches under the default chain', async () => {
+        setupMock(MOCK_RESPONSES.addressCounterpartiesBatch);
+
+        await api.addressCounterpartiesBatch({
+          addresses: [TEST_DATA.solana.address],
+          chain: 'all'
+        });
+
+        const body = expectFetchCalledWith('/api/v1/profiler/address/counterparties/batch');
+        expect(body.wallet_addresses).toEqual([TEST_DATA.solana.address]);
+        expect(body.chain).toBe('all');
+      });
+
+      it('should reject a batch that mixes EVM and Solana addresses', async () => {
+        await expect(
+          api.addressCounterpartiesBatch({
+            addresses: [WALLET_A, TEST_DATA.solana.address],
+            chain: 'all'
+          })
+        ).rejects.toThrow(/chain='all' auto-detects either ecosystem/);
+        expectNoFetch();
+      });
+
+      it('should reject a malformed address when chain is all', async () => {
+        await expect(
+          api.addressCounterpartiesBatch({ addresses: [WALLET_A, '0xtypo'], chain: 'all' })
+        ).rejects.toThrow(/0xtypo/);
+        expectNoFetch();
+      });
+
+      it('should reject a malformed address for a named chain', async () => {
+        await expect(
+          api.addressCounterpartiesBatch({ addresses: [WALLET_A, 'not-an-address'], chain: 'ethereum' })
+        ).rejects.toThrow(/Invalid address "not-an-address" for chain "ethereum": Invalid EVM address format/);
+        expectNoFetch();
+      });
+
+      it('should reject an unsupported named chain before sending addresses', async () => {
+        await expect(
+          api.addressCounterpartiesBatch({ addresses: ['arbitrary-file-line'], chain: 'bsc' })
+        ).rejects.toThrow(/Unsupported chain "bsc"/);
+        expectNoFetch();
+      });
+
+      it('should reject more than the maximum distinct addresses', async () => {
+        await expect(
+          api.addressCounterpartiesBatch({
+            addresses: evmAddresses(COUNTERPARTIES_BATCH_MAX_ADDRESSES + 1),
+            chain: 'ethereum'
+          })
+        ).rejects.toThrow(
+          new RegExp(`at most ${COUNTERPARTIES_BATCH_MAX_ADDRESSES} distinct addresses`)
+        );
+        expectNoFetch();
+      });
+
+      it('should require at least one address', async () => {
+        await expect(
+          api.addressCounterpartiesBatch({ addresses: [], chain: 'ethereum' })
+        ).rejects.toThrow(/--addresses .* or --file <path>/);
+        expectNoFetch();
+      });
+
+      it('should reject a lookback window longer than the maximum', async () => {
+        await expect(
+          api.addressCounterpartiesBatch({
+            addresses: [WALLET_A],
+            chain: 'ethereum',
+            days: COUNTERPARTIES_BATCH_MAX_DAYS + 30
+          })
+        ).rejects.toThrow(new RegExp(`capped at ${COUNTERPARTIES_BATCH_MAX_DAYS} days`));
+        expectNoFetch();
+      });
+
+      it('should accept a window at the maximum', async () => {
+        setupMock(MOCK_RESPONSES.addressCounterpartiesBatch);
+
+        await api.addressCounterpartiesBatch({
+          addresses: [WALLET_A],
+          chain: 'ethereum',
+          days: COUNTERPARTIES_BATCH_MAX_DAYS
+        });
+
+        const body = expectFetchCalledWith('/api/v1/profiler/address/counterparties/batch');
+        const diffDays = Math.round(
+          (new Date(body.date.to) - new Date(body.date.from)) / (1000 * 60 * 60 * 24)
+        );
+        expect(diffDays).toBe(COUNTERPARTIES_BATCH_MAX_DAYS);
+      });
+
+      it('should reject a non-positive or non-numeric days value', async () => {
+        await expect(
+          api.addressCounterpartiesBatch({ addresses: [WALLET_A], chain: 'ethereum', days: 0 })
+        ).rejects.toThrow(/--days must be a positive number/);
+
+        await expect(
+          api.addressCounterpartiesBatch({ addresses: [WALLET_A], chain: 'ethereum', days: parseInt('abc', 10) })
+        ).rejects.toThrow(/--days must be a positive number/);
+        expectNoFetch();
       });
     });
 

@@ -293,7 +293,7 @@ export function formatTable(data) {
   }
 
   // Get columns from first record, prioritize common useful fields
-  const priorityFields = ['token_symbol', 'token_name', 'symbol', 'name', 'address', 'label', 'chain', 'value_usd', 'amount', 'pnl_usd', 'price_usd', 'volume_usd', 'net_flow_usd', 'timestamp', 'block_timestamp'];
+  const priorityFields = ['token_symbol', 'token_name', 'symbol', 'name', 'wallet_address', 'address', 'label', 'chain', 'value_usd', 'amount', 'pnl_usd', 'price_usd', 'volume_usd', 'net_flow_usd', 'timestamp', 'block_timestamp'];
   const allKeys = [...new Set(records.flatMap(r => Object.keys(r)))];
 
   // Sort: priority fields first, then alphabetically
@@ -550,6 +550,35 @@ export function parseAddressList(raw) {
   } catch (e) {
     if (e instanceof NansenError) throw e;
     return s.split(',').map(a => a.trim()).filter(Boolean);
+  }
+}
+
+/**
+ * Read an address list from a file: either a JSON array of address strings or
+ * one address per line. Shared by the profiler commands that accept --file.
+ */
+function readAddressFile(file) {
+  let content;
+  try {
+    content = fs.readFileSync(file, 'utf8');
+  } catch (err) {
+    throw new NansenError(
+      `Could not read --file ${file}: ${err.code === 'ENOENT' ? 'no such file' : err.message}`,
+      ErrorCode.INVALID_PARAMS
+    );
+  }
+  try {
+    const parsed = JSON.parse(content);
+    if (!Array.isArray(parsed) || !parsed.every(item => typeof item === 'string')) {
+      throw new NansenError(
+        'File must contain a JSON array of address strings or one address per line',
+        ErrorCode.INVALID_PARAMS
+      );
+    }
+    return parsed.map(a => a.trim()).filter(Boolean);
+  } catch (e) {
+    if (e instanceof NansenError) throw e;
+    return content.split('\n').map(a => a.trim()).filter(Boolean);
   }
 }
 
@@ -1316,6 +1345,12 @@ export function buildCommands(deps = {}) {
         'related-wallets': () => apiInstance.addressRelatedWallets({ address, chain, orderBy, pagination }),
         'first-funder': () => apiInstance.addressFirstFunder({ address }),
         'counterparties': () => apiInstance.addressCounterparties({ address, chain, filters, orderBy, pagination, days }),
+        'counterparties-batch': () => {
+          const addresses = options.addresses
+            ? parseAddressList(options.addresses)
+            : (options.file ? readAddressFile(options.file) : []);
+          return apiInstance.addressCounterpartiesBatch({ addresses, chain, filters, orderBy, pagination, days });
+        },
         'pnl-summary': () => apiInstance.addressPnlSummary({ address, chain, orderBy, pagination, days }),
         'perp-positions': () => apiInstance.addressPerpPositions({ address, filters, orderBy, pagination }),
         'perp-trades': () => apiInstance.addressPerpTrades({ address, filters, orderBy, pagination, days }),
@@ -1328,20 +1363,7 @@ export function buildCommands(deps = {}) {
           if (options.addresses) {
             addresses = parseAddressList(options.addresses);
           } else if (options.file) {
-            const content = fs.readFileSync(options.file, 'utf8');
-            try {
-              const parsed = JSON.parse(content);
-              if (!Array.isArray(parsed)) {
-                throw new NansenError('File must contain a JSON array of address strings or one address per line', ErrorCode.INVALID_PARAMS);
-              }
-              if (!parsed.every(item => typeof item === 'string')) {
-                throw new NansenError('File must contain a JSON array of address strings or one address per line', ErrorCode.INVALID_PARAMS);
-              }
-              addresses = parsed.map(a => a.trim()).filter(Boolean);
-            } catch (e) {
-              if (e instanceof NansenError) throw e;
-              addresses = content.split('\n').map(a => a.trim()).filter(Boolean);
-            }
+            addresses = readAddressFile(options.file);
           }
           if (addresses.length > 100) {
             throw new NansenError('Batch is limited to 100 addresses', ErrorCode.INVALID_PARAMS);
@@ -1361,7 +1383,7 @@ export function buildCommands(deps = {}) {
           return compareWallets(apiInstance, { addresses: addrs, chain, days });
         },
         'help': () => ({
-          commands: ['balance', 'labels', 'transactions', 'pnl', 'search', 'historical-balances', 'related-wallets', 'first-funder', 'counterparties', 'pnl-summary', 'perp-positions', 'perp-trades', 'dex-trades', 'batch', 'trace', 'compare'],
+          commands: ['balance', 'labels', 'transactions', 'pnl', 'search', 'historical-balances', 'related-wallets', 'first-funder', 'counterparties', 'counterparties-batch', 'pnl-summary', 'perp-positions', 'perp-trades', 'dex-trades', 'batch', 'trace', 'compare'],
           description: 'Wallet profiling endpoints',
           example: 'nansen research profiler compare --addresses "0xABC...,0xDEF..." --chain ethereum'
         })

@@ -41,7 +41,8 @@ import {
 import { getCachedResponse, setCachedResponse, clearCache, getCacheDir, NansenError, ErrorCode, computeIdentityDigest } from '../api.js';
 import { EVM_CHAINS } from '../chain-ids.js';
 import * as fs from 'fs';
-import * as _path from 'path';
+import * as os from 'os';
+import * as path from 'path';
 
 describe('parseArgs', () => {
   it('should parse positional arguments', () => {
@@ -201,6 +202,26 @@ describe('formatTable', () => {
     const header = lines[0];
     // token_symbol should come before zebra (priority field)
     expect(header.indexOf('token_symbol')).toBeLessThan(header.indexOf('zebra'));
+  });
+
+  it('should keep wallet_address when a batch row exceeds the column limit', () => {
+    // A batch counterparties row has 9 keys; without priority, wallet_address
+    // sorts last alphabetically and is cut by the 8-column limit — losing the
+    // key that says which input wallet the row belongs to.
+    const data = [{
+      counterparty_address: '0xcp',
+      counterparty_address_label: ['Exchange'],
+      interaction_count: 12,
+      total_volume_usd: 1000,
+      volume_in_usd: 600,
+      volume_out_usd: 400,
+      tokens_info: [],
+      wallet_address: '0xwallet',
+      chain: 'ethereum'
+    }];
+    const header = formatTable(data).split('\n')[0];
+    expect(header).toContain('wallet_address');
+    expect(header.indexOf('wallet_address')).toBeLessThan(header.indexOf('counterparty_address'));
   });
 });
 
@@ -4204,6 +4225,112 @@ describe('profiler compare command', () => {
     const commands = buildCommands({});
     const result = await commands['profiler'](['help'], null, {}, {});
     expect(result.commands).toContain('compare');
+  });
+});
+
+// =================== profiler counterparties-batch ===================
+
+describe('profiler counterparties-batch command', () => {
+  const ADDR_A = '0x0000000000000000000000000000000000000001';
+  const ADDR_B = '0x0000000000000000000000000000000000000002';
+
+  function mockBatchApi() {
+    return { addressCounterpartiesBatch: vi.fn().mockResolvedValue({ pagination: {}, data: [] }) };
+  }
+
+  it('should appear in SCHEMA', () => {
+    const batch = SCHEMA.commands.research.subcommands['profiler'].subcommands['counterparties-batch'];
+    expect(batch).toBeDefined();
+    expect(batch.endpoint).toBe('/api/v1/profiler/address/counterparties/batch');
+    expect(batch.options.addresses.required).toBeUndefined();
+    expect(batch.options.addresses.description).toContain('--file <path>');
+    expect(batch.options.days.default).toBe(30);
+    // The dispatch default is 'all', so the schema must document that, not 'ethereum'
+    expect(batch.options.chain.default).toBe('all');
+  });
+
+  it('should pass comma-separated --addresses through to the batch method', async () => {
+    const mockApi = mockBatchApi();
+    const commands = buildCommands({});
+    await commands['profiler'](['counterparties-batch'], mockApi, {}, {
+      addresses: `${ADDR_A}, ${ADDR_B}`,
+      chain: 'ethereum',
+      days: '7',
+      page: '1',
+      limit: '2'
+    });
+
+    expect(mockApi.addressCounterpartiesBatch).toHaveBeenCalledWith(expect.objectContaining({
+      addresses: [ADDR_A, ADDR_B],
+      chain: 'ethereum',
+      days: 7,
+      pagination: { page: 1, per_page: 2 }
+    }));
+  });
+
+  it('should send chain "all" when --chain is omitted', async () => {
+    const mockApi = mockBatchApi();
+    const commands = buildCommands({});
+    await commands['profiler'](['counterparties-batch'], mockApi, {}, { addresses: ADDR_A });
+
+    expect(mockApi.addressCounterpartiesBatch).toHaveBeenCalledWith(expect.objectContaining({
+      addresses: [ADDR_A],
+      chain: 'all'
+    }));
+  });
+
+  it('should read addresses from --file', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nansen-cli-test-'));
+    const file = path.join(dir, 'addresses.txt');
+    fs.writeFileSync(file, `${ADDR_A}\n${ADDR_B}\n`);
+
+    try {
+      const mockApi = mockBatchApi();
+      const commands = buildCommands({});
+      await commands['profiler'](['counterparties-batch'], mockApi, {}, { file, chain: 'ethereum' });
+
+      expect(mockApi.addressCounterpartiesBatch).toHaveBeenCalledWith(expect.objectContaining({
+        addresses: [ADDR_A, ADDR_B]
+      }));
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('should return the response unchanged so rows keep their wallet_address', async () => {
+    const response = {
+      pagination: { page: 1, per_page: 2, total_pages: 1 },
+      data: [
+        { wallet_address: ADDR_A, counterparty_address: '0xaaa', chain: 'ethereum', interaction_count: 3 },
+        { wallet_address: ADDR_B, counterparty_address: '0xbbb', chain: 'ethereum', interaction_count: 1 }
+      ]
+    };
+    const mockApi = {
+      addressCounterpartiesBatch: vi.fn().mockResolvedValue(response),
+    };
+    const commands = buildCommands({});
+    const result = await commands['profiler'](['counterparties-batch'], mockApi, {}, {
+      addresses: `${ADDR_A},${ADDR_B}`,
+      chain: 'ethereum'
+    });
+
+    expect(result).toEqual(response);
+    expect(result.data.map(row => row.wallet_address)).toEqual([ADDR_A, ADDR_B]);
+  });
+
+  it('should raise an actionable error when --file does not exist', async () => {
+    const missing = path.join(os.tmpdir(), 'nansen-cli-test-missing-addresses.txt');
+    const commands = buildCommands({});
+
+    await expect(
+      commands['profiler'](['counterparties-batch'], mockBatchApi(), {}, { file: missing })
+    ).rejects.toThrow(/Could not read --file .*: no such file/);
+  });
+
+  it('should be listed in profiler help', async () => {
+    const commands = buildCommands({});
+    const result = await commands['profiler'](['help'], null, {}, {});
+    expect(result.commands).toContain('counterparties-batch');
   });
 });
 

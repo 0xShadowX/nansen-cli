@@ -571,6 +571,30 @@
                 }
               }
             },
+            "counterparties-batch": {
+              "endpoint": "/api/v1/profiler/address/counterparties/batch",
+              "description": "Top counterparties by volume for up to 10 wallets in one request. Results are not aggregated: every row carries the wallet_address it belongs to, returned as contiguous per-wallet blocks ordered by wallet address — raise --limit and page with --page N to reach later wallets",
+              "options": {
+                "addresses": {
+                  "type": "string",
+                  "description": "Comma-separated list (or JSON array) of up to 10 distinct wallet addresses; required unless --file <path> is provided"
+                },
+                "file": {
+                  "type": "string",
+                  "description": "Read addresses from this file instead of --addresses: a JSON array of addresses, or one address per line"
+                },
+                "chain": {
+                  "type": "string",
+                  "default": "all",
+                  "description": "Chain to profile every address on. One ecosystem per request: EVM and Solana addresses cannot be mixed. The default 'all' auto-detects the ecosystem"
+                },
+                "days": {
+                  "type": "number",
+                  "default": 30,
+                  "description": "Lookback window in days (max 90 for this command)"
+                }
+              }
+            },
             "historical-balances": {
               "endpoint": "/api/v1/profiler/address/historical-balances",
               "description": "Historical balances over time",

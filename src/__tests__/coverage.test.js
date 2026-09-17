@@ -32,6 +32,7 @@ const DOCUMENTED_ENDPOINTS = {
     { name: 'historical-balances', method: 'addressHistoricalBalances', endpoint: '/api/v1/profiler/address/historical-balances' },
     { name: 'related-wallets', method: 'addressRelatedWallets', endpoint: '/api/v1/profiler/address/related-wallets' },
     { name: 'counterparties', method: 'addressCounterparties', endpoint: '/api/v1/profiler/address/counterparties' },
+    { name: 'counterparties-batch', method: 'addressCounterpartiesBatch', endpoint: '/api/v1/profiler/address/counterparties/batch' },
     { name: 'pnl-summary', method: 'addressPnlSummary', endpoint: '/api/v1/profiler/address/pnl-summary' },
     { name: 'perp-positions', method: 'addressPerpPositions', endpoint: '/api/v1/profiler/perp-positions' },
     { name: 'perp-trades', method: 'addressPerpTrades', endpoint: '/api/v1/profiler/perp-trades' },

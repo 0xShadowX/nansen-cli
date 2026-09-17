@@ -386,6 +386,11 @@ const ADDRESS_PATTERNS = {
   bitcoin: /^(1|3|bc1)[a-zA-HJ-NP-Z0-9]{25,62}$/,
 };
 
+// Server-side limits on the batch counterparties endpoint. Checked client-side so
+// an over-limit request fails with an actionable message instead of a 422.
+export const COUNTERPARTIES_BATCH_MAX_ADDRESSES = 10;
+export const COUNTERPARTIES_BATCH_MAX_DAYS = 90;
+
 /**
  * Validate address format for a given chain
  * @param {string} address - The address to validate
@@ -442,7 +447,7 @@ export function validateTokenAddress(tokenAddress, chain = 'solana') {
  */
 function requireValidAddress(address, chain) {
   const v = validateAddress(address, chain);
-  if (!v.valid) throw new NansenError(v.error, v.code);
+  if (!v.valid) throw new NansenError(`Invalid address "${address}" for chain "${chain}": ${v.error}`, v.code);
 }
 
 /**
@@ -451,6 +456,20 @@ function requireValidAddress(address, chain) {
 function requireValidToken(tokenAddress, chain) {
   const v = validateTokenAddress(tokenAddress, chain);
   if (!v.valid) throw new NansenError(v.error, v.code);
+}
+
+/**
+ * Which ecosystem chain 'all' would route this address to, or throw if neither.
+ * validateAddress's unknown-chain branch accepts any non-empty string for 'all',
+ * so classify against the concrete formats instead.
+ */
+function classifyAutoDetectedAddress(address) {
+  if (validateAddress(address, 'ethereum').valid) return 'EVM';
+  if (validateAddress(address, 'solana').valid) return 'Solana';
+  throw new NansenError(
+    `Invalid address format: "${address}". With chain "all" every address must be a valid EVM address (0x followed by 40 hex characters) or Solana address (Base58, 32-44 chars).`,
+    ErrorCode.INVALID_ADDRESS
+  );
 }
 
 export function loadConfig() {
@@ -1222,6 +1241,76 @@ export class NansenAPI {
       address,
       chain,
       date: buildDateRange(days),
+      filters,
+      order_by: orderBy,
+      pagination
+    });
+  }
+
+  /**
+   * Batch counterparties for up to 10 distinct wallets in one request.
+   * Results are not aggregated: every row carries the `wallet_address` it belongs to.
+   * Defaults to chain 'all' (the ecosystem is auto-detected), matching the CLI.
+   */
+  async addressCounterpartiesBatch(params = {}) {
+    const { addresses, chain = 'all', filters = {}, orderBy, pagination, days = 30, sourceInput } = params;
+    if (!['all', 'solana', ...EVM_CHAINS].includes(chain)) {
+      throw new NansenError(
+        `Unsupported chain "${chain}". Supported chains: all, solana, ${EVM_CHAINS.join(', ')}.`,
+        ErrorCode.INVALID_PARAMS
+      );
+    }
+    const list = Array.isArray(addresses) ? addresses : (addresses ? [addresses] : []);
+    // Dedupe on the normalised form, because the server lowercases EVM addresses
+    // before deduping: a checksum-cased repeat must not count twice against the
+    // address limit. Solana (and other case-sensitive) addresses normalise to
+    // themselves. Chain 'all' auto-detects per address, so normalise EVM casing
+    // there too.
+    const normalizeChain = chain === 'all' ? 'ethereum' : chain;
+    const walletAddresses = [...new Set(
+      list.map(a => normalizeAddress(String(a).trim(), normalizeChain)).filter(Boolean)
+    )];
+
+    if (walletAddresses.length === 0) {
+      throw new NansenError(
+        'At least one wallet address is required. Pass --addresses "0xabc,0xdef" or --file <path>',
+        ErrorCode.MISSING_PARAM
+      );
+    }
+    if (walletAddresses.length > COUNTERPARTIES_BATCH_MAX_ADDRESSES) {
+      throw new NansenError(
+        `Batch counterparties accepts at most ${COUNTERPARTIES_BATCH_MAX_ADDRESSES} distinct addresses per request, got ${walletAddresses.length}. Split them across several requests.`,
+        ErrorCode.INVALID_PARAMS
+      );
+    }
+    if (!Number.isFinite(days) || days < 1) {
+      throw new NansenError('--days must be a positive number', ErrorCode.INVALID_PARAMS);
+    }
+    if (days > COUNTERPARTIES_BATCH_MAX_DAYS) {
+      throw new NansenError(
+        `Batch counterparties is capped at ${COUNTERPARTIES_BATCH_MAX_DAYS} days, got ${days}. Split the window into several requests, or use the single-wallet counterparties command instead.`,
+        ErrorCode.INVALID_PARAMS
+      );
+    }
+    if (chain === 'all') {
+      // 'all' routes each address to its own ecosystem, but one request cannot
+      // span both — the server rejects a mixed batch, so fail before sending it.
+      const ecosystems = new Set(walletAddresses.map(classifyAutoDetectedAddress));
+      if (ecosystems.size > 1) {
+        throw new NansenError(
+          "A batch cannot mix EVM and Solana addresses. Query each ecosystem separately; chain='all' auto-detects either ecosystem.",
+          ErrorCode.INVALID_PARAMS
+        );
+      }
+    } else {
+      for (const walletAddress of walletAddresses) requireValidAddress(walletAddress, chain);
+    }
+
+    return this.request('/api/v1/profiler/address/counterparties/batch', {
+      wallet_addresses: walletAddresses,
+      chain,
+      date: buildDateRange(days),
+      source_input: sourceInput,
       filters,
       order_by: orderBy,
       pagination
