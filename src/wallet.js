@@ -760,11 +760,12 @@ export function buildWalletCommands(deps = {}) {
             throw new CommandError('Usage: nansen wallet export <name> [--reveal | --file <path>]', 'MISSING_ARGS');
           }
 
-          // Bare `--file` parses as flags.file, and `--file true` JSON-parses
-          // to a boolean — both would silently drop the path, so reject them
-          // before any secret is decrypted.
+          // Bare `--file` parses as flags.file, `--file true` JSON-parses to a
+          // boolean, and `--file ""` (an unset shell variable) is an empty path
+          // that would only fail at open time — reject all of them before any
+          // secret is decrypted.
           const wantsFile = options.file !== undefined || flags.file;
-          if (wantsFile && typeof options.file !== 'string') {
+          if (wantsFile && (typeof options.file !== 'string' || options.file === '')) {
             throw new CommandError('--file requires a path: nansen wallet export <name> --file <path>', 'INVALID_INPUT');
           }
           if (wantsFile && flags.reveal) {
@@ -816,7 +817,8 @@ export function buildWalletCommands(deps = {}) {
                 fd = fs.openSync(options.file, 'wx', 0o600);
               } catch (err) {
                 if (err.code === 'EEXIST') {
-                  throw new Error(`File already exists: ${options.file} — refusing to overwrite. Delete it or choose another path.`, { cause: err });
+                  // EEXIST also covers directories and symlinks, so don't advise deleting it.
+                  throw new Error(`Path already exists: ${options.file} — refusing to overwrite. Choose a path that does not exist yet.`, { cause: err });
                 }
                 throw new Error(`Could not create ${options.file} (${err.code || 'open failed'}). Nothing was written.`, { cause: err });
               }

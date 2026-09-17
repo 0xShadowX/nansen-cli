@@ -1,5 +1,5 @@
 /**
- * API-279: wallet export must never disclose private keys unless explicitly
+ * wallet export must never disclose private keys unless explicitly
  * acknowledged (--reveal) or routed to a 0600 file (--file). These tests also
  * prove key material stays out of ordinary errors, DEBUG stderr output, and
  * telemetry payloads.
@@ -208,6 +208,31 @@ describe('wallet export --file', () => {
     const { error } = await runExport(['bool-file'], {}, { file: true });
     expect(error).toBeTruthy();
     expect(error.code).toBe('INVALID_INPUT');
+  });
+
+  it('rejects an empty-string --file before decrypting', async () => {
+    createWalletWithKeys('empty-file');
+    // With no password available, reaching the decrypt stage would surface
+    // PASSWORD_REQUIRED instead — so INVALID_INPUT proves the guard ran first.
+    delete process.env.NANSEN_WALLET_PASSWORD;
+    const direct = await runExport(['empty-file'], {}, { file: '' });
+    expect(direct.error?.code).toBe('INVALID_INPUT');
+
+    // parseArgs keeps an explicit "" as the option value (e.g. --file "$UNSET_VAR").
+    const parsed = parseArgs(['export', 'empty-file', '--file', '']);
+    expect(parsed.options.file).toBe('');
+    const viaParser = await runExport(['empty-file'], parsed.flags, parsed.options);
+    expect(viaParser.error?.code).toBe('INVALID_INPUT');
+  });
+
+  it('refuses when --file points at an existing directory', async () => {
+    const keys = createWalletWithKeys('dir-target');
+    const { logs, error } = await runExport(['dir-target'], {}, { file: tempDir });
+    expect(error).toBeTruthy();
+    expect(error.message).toContain('refusing to overwrite');
+    expect(error.message).not.toContain('Delete');
+    expect(fs.statSync(tempDir).isDirectory()).toBe(true);
+    assertNoKeyMaterial(logs.join('\n') + error.message, keys);
   });
 
   it('rejects --reveal combined with --file', async () => {
