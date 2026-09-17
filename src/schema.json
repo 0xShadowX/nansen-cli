@@ -2275,7 +2275,13 @@
       "description": "Wallet management. x402 auto-payments are guarded by a client-side policy: per-payment USD cap via NANSEN_X402_MAX_AMOUNT (default 1.00; 'unlimited' to disable) and an optional recipient allowlist via NANSEN_X402_ALLOWED_PAYTO (comma-separated addresses).",
       "subcommands": {
         "create": {
-          "description": "Create a new wallet"
+          "description": "Create a new wallet",
+          "options": {
+            "unsafe-no-password": {
+              "type": "boolean",
+              "description": "Skip encryption; private keys are stored unencrypted on disk (local only)"
+            }
+          }
         },
         "list": {
           "description": "List all wallets"
@@ -2304,8 +2310,11 @@
             },
             "amount": {
               "type": "string",
-              "required": true,
-              "description": "Amount to send in human-readable units, e.g. 1.5"
+              "description": "Amount to send in human-readable units, e.g. 1.5. Required unless --max is set"
+            },
+            "max": {
+              "type": "boolean",
+              "description": "Send the entire spendable balance instead of --amount"
             }
           }
         },

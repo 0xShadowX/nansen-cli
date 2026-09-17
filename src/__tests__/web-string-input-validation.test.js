@@ -63,6 +63,29 @@ describe('web string option validation', () => {
     expect(api.webFetch).not.toHaveBeenCalled();
   });
 
+  it('reports a blank --question instead of a bogus invalid-URL error', async () => {
+    const { api, promise } = invoke([
+      'fetch',
+      'https://nansen.ai',
+      '--question', '',
+    ]);
+
+    await expect(promise).rejects.toThrow('--question is required and cannot be blank');
+    expect(api.webFetch).not.toHaveBeenCalled();
+  });
+
+  it('rejects a blank --url instead of silently fetching only the positional URL', async () => {
+    const { api, promise } = invoke([
+      'fetch',
+      'https://nansen.ai',
+      '--url', '',
+      '--question', 'Summarize',
+    ]);
+
+    await expect(promise).rejects.toThrow('Invalid URL: ""');
+    expect(api.webFetch).not.toHaveBeenCalled();
+  });
+
   it('keeps valid string options unchanged', async () => {
     const search = invoke(['search', '--query', 'ethereum']);
     await search.promise;

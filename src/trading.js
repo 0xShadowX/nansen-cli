@@ -2061,6 +2061,16 @@ export function buildTradingCommands(deps = {}) {
       // can't become a 300% slippage tolerance.
       for (const [optName, optVal] of [['slippage', slippage], ['max-auto-slippage', maxAutoSlippage]]) {
         if (optVal == null) continue;
+        // A blank value must not read as "not supplied": `Number('')` is 0, which
+        // would pass the range check below, satisfy the exactOut cap requirement,
+        // and then be dropped by the truthiness test that builds the request, so
+        // the approval would be scoped by a cap that was never sent.
+        if (typeof optVal === 'string' && optVal.trim() === '') {
+          throw new CommandError(
+            `Invalid --${optName} "". Use a decimal between 0 and 1 (e.g. 0.03 for 3%).`,
+            'INVALID_SLIPPAGE'
+          );
+        }
         const n = Number(optVal);
         if (!Number.isFinite(n) || n < 0 || n > 1) {
           throw new CommandError(

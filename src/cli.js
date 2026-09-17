@@ -174,7 +174,7 @@ export const VALUELESS_FLAGS = new Set([
   'pretty', 'help', 'version', 'table', 'no-retry', 'cache', 'no-cache', 'stream',
   'enrich', 'full', 'human', 'enabled', 'disabled', 'expert', 'json', 'offline',
   'no-simulate', 'no-verify-outcome', 'no-revoke-excessive-allowance', 'dry-run',
-  'send-api-key',
+  'send-api-key', 'all', 'max', 'gasless', 'auto-slippage', 'unsafe-no-password',
 ]);
 
 export function parseArgs(args) {
@@ -189,7 +189,10 @@ export function parseArgs(args) {
       
       if (VALUELESS_FLAGS.has(key)) {
         result.flags[key] = true;
-      } else if (next && (!next.startsWith('-') || /^-\d/.test(next))) {
+      // `next !== undefined` rather than a truthiness check: an explicit empty
+      // string is a real value, and skipping it here left `""` dangling to be
+      // picked up as a positional arg on the next iteration.
+      } else if (next !== undefined && (!next.startsWith('-') || /^-\d/.test(next))) {
         // Try to parse as JSON first (for objects/arrays/booleans),
         // but keep numeric strings as strings to avoid precision loss
         // and scientific notation for large integers (e.g. 1e+21).
@@ -1012,7 +1015,7 @@ export function buildCommands(deps = {}) {
         'fetch': async () => {
           // Accept URLs as positional args or --url (repeated)
           let urls = subArgs.length > 0 ? subArgs : [];
-          if (options.url) {
+          if (options.url !== undefined) {
             const fromOption = Array.isArray(options.url) ? options.url : [options.url];
             urls = urls.concat(fromOption);
           }
