@@ -426,6 +426,23 @@ export const COUNTERPARTIES_BATCH_CHAINS = [
 const ADDRESS_SHAPED = /^[A-Za-z0-9][A-Za-z0-9._-]{2,127}$/;
 
 /**
+ * TON's raw address form: a workchain id, ":", then 64 hex characters —
+ * `0:` for the basechain, `-1:` for the masterchain. Both the ":" and the
+ * leading "-" fail ADDRESS_SHAPED, so raw TON addresses were rejected with a
+ * misleading error even though the endpoint serves them. Matched exactly here
+ * rather than by adding ":" to ADDRESS_SHAPED, which would put a separator no
+ * other supported chain uses back into the floor for every chain. Friendly
+ * (base64url) TON addresses already clear ADDRESS_SHAPED.
+ */
+const TON_RAW_ADDRESS = /^-?\d{1,10}:[0-9a-fA-F]{64}$/;
+
+/** Whether an address clears the shape floor for `chain`. */
+function isAddressShaped(address, chain) {
+  if (ADDRESS_SHAPED.test(address)) return true;
+  return chain === 'ton' && TON_RAW_ADDRESS.test(address);
+}
+
+/**
  * Resolve a caller-supplied chain to the spelling the batch endpoint accepts,
  * or throw. `bsc` is the common spelling and the one the API echoes back in
  * responses, but the request enum only knows `bnb` — normalise rather than
@@ -1352,11 +1369,15 @@ export class NansenAPI {
     } else {
       for (const walletAddress of walletAddresses) {
         // Strict where this CLI knows the format (EVM, Solana, Bitcoin); a
-        // no-op elsewhere, where ADDRESS_SHAPED is the only floor there is.
+        // no-op elsewhere, where the shape floor is all there is.
         requireValidAddress(walletAddress, resolvedChain);
-        if (!ADDRESS_SHAPED.test(walletAddress)) {
+        if (!isAddressShaped(walletAddress, resolvedChain)) {
+          const shape = 'an address-shaped token (3-128 characters, letters, digits, ".", "-" or "_")'
+            + (resolvedChain === 'ton'
+              ? ', or a raw TON address (workchain, ":" and 64 hex characters, e.g. "0:" or "-1:")'
+              : '');
           throw new NansenError(
-            `Invalid address "${walletAddress}" for chain "${resolvedChain}": expected an address-shaped token (3-128 characters, letters, digits, ".", "-" or "_"). This CLI cannot check ${resolvedChain} address formats, so the API validates the rest.`,
+            `Invalid address "${walletAddress}" for chain "${resolvedChain}": expected ${shape}. This CLI cannot check ${resolvedChain} address formats, so the API validates the rest.`,
             ErrorCode.INVALID_ADDRESS
           );
         }
