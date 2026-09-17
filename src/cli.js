@@ -220,37 +220,72 @@ export function parseArgs(args) {
   return result;
 }
 
-function parseNonNegativeSafeIntegerOption(name, options, flags, defaultValue) {
+function parseSafeIntegerOption(
+  name,
+  options,
+  flags,
+  defaultValue,
+  requirement = 'safe integer',
+) {
   if (flags[name]) {
     throw new NansenError(
-      `--${name} requires a non-negative safe integer value`,
+      `--${name} requires a ${requirement} value`,
       ErrorCode.INVALID_PARAMS,
     );
   }
+
   if (options[name] === undefined) return defaultValue;
 
   const rawValue = options[name];
+
   if (Array.isArray(rawValue)) {
     throw new NansenError(
       `--${name} may only be specified once`,
       ErrorCode.INVALID_PARAMS,
     );
   }
-  if (typeof rawValue === 'string' && rawValue.trim() === '') {
+
+  if (
+    typeof rawValue === 'boolean' ||
+    (typeof rawValue === 'string' && rawValue.trim() === '')
+  ) {
     throw new NansenError(
-      `--${name} requires a non-negative safe integer value`,
+      `--${name} requires a ${requirement} value`,
       ErrorCode.INVALID_PARAMS,
     );
   }
-  const value = typeof rawValue === 'string' || typeof rawValue === 'number'
-    ? Number(rawValue)
-    : NaN;
-  if (!Number.isSafeInteger(value) || value < 0) {
+
+  const value =
+    typeof rawValue === 'string' || typeof rawValue === 'number'
+      ? Number(rawValue)
+      : NaN;
+
+  if (!Number.isSafeInteger(value)) {
     throw new NansenError(
-      `--${name} must be a non-negative safe integer; received: ${String(rawValue)}`,
+      `--${name} must be a ${requirement}; received: ${String(rawValue)}`,
       ErrorCode.INVALID_PARAMS,
     );
   }
+
+  return value;
+}
+
+function parseNonNegativeSafeIntegerOption(name, options, flags, defaultValue) {
+  const value = parseSafeIntegerOption(
+    name,
+    options,
+    flags,
+    defaultValue,
+    'non-negative safe integer',
+  );
+
+  if (value < 0) {
+    throw new NansenError(
+      `--${name} must be a non-negative safe integer; received: ${value}`,
+      ErrorCode.INVALID_PARAMS,
+    );
+  }
+
   return value;
 }
 
@@ -607,27 +642,13 @@ export async function batchProfile(api, params = {}) {
 }
 
 function normalizeTraceDepth(raw) {
-  if (Array.isArray(raw)) {
-    throw new NansenError(
-      '--depth may only be specified once',
-      ErrorCode.INVALID_PARAMS,
-    );
-  }
-  if (typeof raw === 'string' && raw.trim() === '') {
-    throw new NansenError(
-      '--depth requires a safe integer value',
-      ErrorCode.INVALID_PARAMS,
-    );
-  }
-  const value = typeof raw === 'string' || typeof raw === 'number'
-    ? Number(raw)
-    : NaN;
-  if (!Number.isSafeInteger(value)) {
-    throw new NansenError(
-      `--depth must be a safe integer; received: ${String(raw)}`,
-      ErrorCode.INVALID_PARAMS,
-    );
-  }
+  const value = parseSafeIntegerOption(
+    'depth',
+    { depth: raw },
+    {},
+    2,
+  );
+
   return Math.max(1, Math.min(value, 5));
 }
 
