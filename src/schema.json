@@ -410,7 +410,7 @@
       }
     },
     "research": {
-      "description": "Research and analytics commands. Explicitly blank chain and timeframe options are rejected instead of selecting defaults.",
+      "description": "Research and analytics commands. Explicitly blank chain, timeframe, and days options are rejected instead of selecting defaults. Profiler batch rejects blank --delay; trace rejects blank --delay, --depth, and --width.",
       "subcommands": {
         "portfolio": {
           "subcommands": {
@@ -2194,7 +2194,7 @@
               ]
             },
             "list": {
-              "description": "List your limit orders. Explicitly blank --wallet, --limit, --offset, and --dir values are rejected.",
+              "description": "List your limit orders. Explicitly blank --wallet, --limit, --offset, --dir, and --mint values are rejected.",
               "options": {
                 "state": {
                   "type": "string",

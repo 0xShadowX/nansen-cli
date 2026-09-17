@@ -39,6 +39,14 @@ const quoteOptions = { chain: 'base', from: 'ETH', to: 'USDC', amount: '1000' };
 const sendOptions = { chain: 'base', to: '0x1111111111111111111111111111111111111111', amount: '1' };
 const researchCases = [
   ['search', 'SOL', 'chain'],
+  ['smart-money', 'historical-holdings', 'days'],
+  ['profiler', 'historical-balances', 'days'],
+  ['token', 'dex-trades', 'days'],
+  ['perp', 'screener', 'days'],
+  ['profiler', 'batch', 'delay'],
+  ['profiler', 'trace', 'delay'],
+  ['profiler', 'trace', 'depth'],
+  ['profiler', 'trace', 'width'],
   ['smart-money', 'netflow', 'chain'],
   ['smart-money', 'netflow', 'chains'],
   ['profiler', 'balance', 'chain'],
@@ -84,7 +92,7 @@ describe.each(['', ' \t '])('explicit blank option %j', blank => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  it.each(['limit', 'offset', 'dir'])('rejects limit-order list --%s', async name => {
+  it.each(['limit', 'offset', 'dir', 'mint'])('rejects limit-order list --%s', async name => {
     const parsed = parseArgs(['--' + name, blank]);
     await expect(buildLimitOrderCommands(deps).list([], null, parsed.flags, parsed.options))
       .rejects.toMatchObject({ code: 'MISSING_PARAM', message: expect.stringContaining(`--${name} requires a value`) });
@@ -109,8 +117,10 @@ describe.each(['', ' \t '])('explicit blank option %j', blank => {
   });
 
   it.each(researchCases)('rejects research %s %s --%s', async (category, sub, name) => {
-    const api = { generalSearch: vi.fn(), tokenScreener: vi.fn(), tokenOhlcv: vi.fn(), tokenFlowIntelligence: vi.fn(), tokenWhoBoughtSold: vi.fn(), smartMoneyNetflow: vi.fn(), profilerBalance: vi.fn() };
+    const api = { smartMoneyHistoricalHoldings: vi.fn(), addressHistoricalBalances: vi.fn(), tokenDexTrades: vi.fn(), perpScreener: vi.fn(), addressLabels: vi.fn(), addressBalance: vi.fn(), addressCounterparties: vi.fn().mockResolvedValue({ data: [] }), generalSearch: vi.fn(), tokenScreener: vi.fn(), tokenOhlcv: vi.fn(), tokenFlowIntelligence: vi.fn(), tokenWhoBoughtSold: vi.fn(), smartMoneyNetflow: vi.fn(), profilerBalance: vi.fn() };
     await expect(buildCommands(deps).research([category, sub], api, {}, {
+      address: '0x1111111111111111111111111111111111111111',
+      addresses: '0x1111111111111111111111111111111111111111',
       token: 'So11111111111111111111111111111111111111112', [name]: blank,
     })).rejects.toMatchObject({ code: 'MISSING_PARAM', message: expect.stringContaining(`--${name} requires a value`) });
     for (const method of Object.values(api)) expect(method).not.toHaveBeenCalled();
@@ -187,4 +197,17 @@ it.each([[undefined, 'BUY'], ['SELL', 'SELL']])('preserves who-bought-sold side 
     token: 'So11111111111111111111111111111111111111112', ...options,
   });
   expect(api.tokenWhoBoughtSold).toHaveBeenCalledWith(expect.objectContaining({ buyOrSell: expected }));
+});
+
+describe.each([
+  ['smart-money', 'historical-holdings', 'smartMoneyHistoricalHoldings'],
+  ['profiler', 'historical-balances', 'addressHistoricalBalances'],
+  ['token', 'dex-trades', 'tokenDexTrades'],
+  ['perp', 'screener', 'perpScreener'],
+])('research %s %s days', (category, subcommand, method) => {
+  it.each([[undefined, 30], ['7', 7]])('preserves omitted or valid --days %j', async (days, expected) => {
+    const api = { [method]: vi.fn() };
+    await buildCommands(deps).research([category, subcommand], api, {}, days === undefined ? {} : { days });
+    expect(api[method]).toHaveBeenCalledWith(expect.objectContaining({ days: expected }));
+  });
 });

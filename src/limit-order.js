@@ -888,6 +888,7 @@ EXAMPLES:
     },
 
     'list': async (args, apiInstance, flags, options) => {
+      rejectBlankOption(options.mint, 'mint', 'SOL');
       rejectBlankOption(options.limit, 'limit', '20');
       rejectBlankOption(options.offset, 'offset', '0');
       rejectBlankOption(options.dir, 'dir', 'desc');

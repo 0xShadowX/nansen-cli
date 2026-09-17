@@ -1321,6 +1321,7 @@ export function buildCommands(deps = {}) {
     },
 
     'smart-money': async (args, apiInstance, flags, options) => {
+      rejectBlankOption(options.days, 'days', '30');
       rejectBlankOption(options.chain, 'chain', 'solana');
       rejectBlankOption(options.chains, 'chains', 'solana');
       const subcommand = args[0] || 'help';
@@ -1361,6 +1362,7 @@ export function buildCommands(deps = {}) {
     },
 
     'profiler': async (args, apiInstance, flags, options) => {
+      rejectBlankOption(options.days, 'days', '30');
       rejectBlankOption(options.chain, 'chain', 'ethereum');
       const subcommand = args[0] || 'help';
       let address = options.address;
@@ -1414,6 +1416,7 @@ export function buildCommands(deps = {}) {
           return apiInstance.addressDexTrades({ address, chain, filters, orderBy, pagination, days, date });
         },
         'batch': () => {
+          rejectBlankOption(options.delay, 'delay', '1000');
           let addresses = [];
           if (options.addresses) {
             addresses = parseAddressList(options.addresses);
@@ -1429,6 +1432,9 @@ export function buildCommands(deps = {}) {
           return batchProfile(apiInstance, { addresses, chain, include, delayMs });
         },
         'trace': () => {
+          rejectBlankOption(options.delay, 'delay', '1000');
+          rejectBlankOption(options.depth, 'depth', '2');
+          rejectBlankOption(options.width, 'width', '10');
           if (flags.depth) {
             throw new NansenError(
               '--depth requires a safe integer value',
@@ -1464,6 +1470,7 @@ export function buildCommands(deps = {}) {
     },
 
     'token': async (args, apiInstance, flags, options) => {
+      rejectBlankOption(options.days, 'days', '30');
       rejectBlankOption(options.chain, 'chain', 'solana');
       rejectBlankOption(options.chains, 'chains', 'solana');
       rejectBlankOption(options.timeframe, 'timeframe', '1d');
@@ -1619,6 +1626,7 @@ export function buildCommands(deps = {}) {
     },
 
     'perp': async (args, apiInstance, flags, options) => {
+      rejectBlankOption(options.days, 'days', '30');
       const subcommand = args[0] || 'help';
       const filters = options.filters || {};
       const orderBy = parseSort(options.sort, options['order-by']);
