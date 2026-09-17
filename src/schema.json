@@ -1402,6 +1402,7 @@
         "create": {
           "endpoint": "/api/v1/smart-alert",
           "description": "Create a new alert",
+          "notes": "Sent as POST /api/v1/smart-alert. alerts update PATCHes the same path; the schema declares routes by path only, so the two subcommands intentionally share one endpoint entry and one credit cost.",
           "options": {
             "name": {
               "type": "string",
@@ -1454,6 +1455,7 @@
         "update": {
           "endpoint": "/api/v1/smart-alert",
           "description": "Update an existing alert. Usage: nansen alerts update <id> [options]",
+          "notes": "Sent as PATCH /api/v1/smart-alert. alerts create POSTs the same path; the schema declares routes by path only, so the two subcommands intentionally share one endpoint entry and one credit cost.",
           "options": {
             "name": {
               "type": "string",
