@@ -312,12 +312,15 @@ describe('scheduleUpdateCheck atomic write', () => {
     const script = buildCheckScript(dir, file, `http://127.0.0.1:${port}/nansen-cli/latest`);
 
     try {
-      await new Promise((resolve, reject) => {
+      // Exit code guards against a false negative: a child that dies before it
+      // reaches the write also leaves no cache file.
+      const exitCode = await new Promise((resolve, reject) => {
         const child = childProcess.spawn(process.execPath, ['-e', script], { stdio: 'ignore' });
         child.on('exit', resolve);
         child.on('error', reject);
       });
 
+      expect(exitCode).toBe(0);
       expect(fs.existsSync(file)).toBe(false);
     } finally {
       await new Promise(resolve => server.close(resolve));
@@ -337,12 +340,15 @@ describe('scheduleUpdateCheck atomic write', () => {
     const script = buildCheckScript(dir, file, `http://127.0.0.1:${port}/nansen-cli/latest`);
 
     try {
-      await new Promise((resolve, reject) => {
+      // Exit code guards against a false negative: a child that dies before it
+      // reaches the write also leaves no cache file.
+      const exitCode = await new Promise((resolve, reject) => {
         const child = childProcess.spawn(process.execPath, ['-e', script], { stdio: 'ignore' });
         child.on('exit', resolve);
         child.on('error', reject);
       });
 
+      expect(exitCode).toBe(0);
       expect(fs.existsSync(file)).toBe(false);
     } finally {
       await new Promise(resolve => server.close(resolve));
