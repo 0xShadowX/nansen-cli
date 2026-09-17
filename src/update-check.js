@@ -101,10 +101,10 @@ const REGISTRY_URL = `https://registry.npmjs.org/${PACKAGE_NAME}/latest`;
  * POSIX, so a concurrent `nansen` reader always sees either the old file or the
  * fully-written new one — never a truncated/empty file.
  *
- * The registry URL is overridable via NANSEN_REGISTRY_URL purely as a test seam
- * (lets a test point the child at a local server); it defaults to npm.
+ * The URL is injectable as the third argument, which is how the tests point the
+ * child at a local server. It defaults to the npm registry.
  */
-export function buildCheckScript(dir, file, url = process.env.NANSEN_REGISTRY_URL || REGISTRY_URL) {
+export function buildCheckScript(dir, file, url = REGISTRY_URL) {
   return `
     const url = ${JSON.stringify(url)};
     const http = require(url.startsWith('https:') ? 'https' : 'http');
