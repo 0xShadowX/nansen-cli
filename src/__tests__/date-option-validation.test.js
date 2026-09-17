@@ -59,6 +59,8 @@ describe('parseDateOption validation', () => {
     const api = {
       addressTransactions: vi.fn(async () => ({ data: [] })),
     };
+    // buildCommands exposes the top-level profiler handler directly; it receives
+    // argv after the `profiler` token, so args[0] is the `transactions` subcommand.
     const { _: args, flags, options } = parseArgs([
       'transactions',
       '--address', '0x0000000000000000000000000000000000000001',
@@ -76,6 +78,7 @@ describe('parseDateOption validation', () => {
     const api = {
       addressTransactions: vi.fn(async () => ({ data: [] })),
     };
+    // Same direct profiler dispatch as above: the handler starts at subcommand args.
     const { _: args, flags, options } = parseArgs([
       'transactions',
       '--address', '0x0000000000000000000000000000000000000001',
