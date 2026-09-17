@@ -3301,6 +3301,15 @@ describe('parseFields', () => {
       expect.objectContaining({ code: ErrorCode.INVALID_PARAMS })
     );
   });
+
+  it('rejects falsy non-string values (--fields false / --fields null) instead of silently returning null', () => {
+    expect(() => parseFields(false)).toThrowError(
+      expect.objectContaining({ code: ErrorCode.INVALID_PARAMS })
+    );
+    expect(() => parseFields(null)).toThrowError(
+      expect.objectContaining({ code: ErrorCode.INVALID_PARAMS })
+    );
+  });
 });
 
 describe('filterFields', () => {
