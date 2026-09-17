@@ -5198,7 +5198,8 @@ describe('deprecation warnings', () => {
     expect(DEPRECATED_TO_RESEARCH.has('token')).toBe(true);
     expect(DEPRECATED_TO_RESEARCH.has('search')).toBe(true);
     expect(DEPRECATED_TO_RESEARCH.has('portfolio')).toBe(true);
-    expect(DEPRECATED_TO_RESEARCH.has('points')).toBe(true);
+    // Points is unavailable in both forms, so there is no replacement alias to suggest.
+    expect(DEPRECATED_TO_RESEARCH.has('points')).toBe(false);
     // 'perp' is a top-level trading command (nansen perp order|close|...), not a
     // deprecated alias for 'research perp', so it must not be in this set.
     expect(DEPRECATED_TO_RESEARCH.has('perp')).toBe(false);

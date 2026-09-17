@@ -780,7 +780,7 @@ COMMANDS:
   trade       DEX swaps/bridges: quote, execute, bridge-status, limit-order
   bridge      Hyperliquid bridge: quote, execute, status (EVM <-> HL)
   perp        Hyperliquid perps: order, cancel, close, leverage, positions
-  research    analytics: smart-money, profiler, token, search, perp, portfolio, points
+  research    analytics: smart-money, profiler, token, search, perp, portfolio
   wallet      create, list, show, export, default, delete, forget-password
   agent       Ask the Nansen AI research agent (fast/expert modes)
   alerts      list, create, update, toggle, delete
@@ -821,7 +821,7 @@ EXAMPLES:
   nansen research profiler balance --address 0x... --chain ethereum
 
 DEPRECATED ALIASES (still work, will be removed in a future version):
-  smart-money, profiler, token, search, perp, portfolio, points → use "nansen research <command>"
+  smart-money, profiler, token, search, perp, portfolio → use "nansen research <command>"
   quote, execute → use "nansen trade <command>"
 
 Research chains: ethereum, solana, base, bnb, arbitrum, polygon, optimism, avalanche, linea, scroll, mantle, ronin, sei, plasma, sonic, monad, hyperevm, iotaevm
@@ -1601,25 +1601,8 @@ export function buildCommands(deps = {}) {
       });
     },
 
-    'points': async (args, apiInstance, flags, options) => {
-      const subcommand = args[0] || 'help';
-      const tier = options.tier;
-      const pagination = buildPagination(options);
-
-      const handlers = {
-        'leaderboard': () => apiInstance.pointsLeaderboard({ tier, pagination }),
-        'help': () => ({
-          commands: ['leaderboard'],
-          description: 'Nansen Points analytics endpoints',
-          example: 'nansen points leaderboard --limit 100'
-        })
-      };
-
-      if (!handlers[subcommand]) {
-        return { error: `Unknown subcommand: ${subcommand}`, available: Object.keys(handlers) };
-      }
-
-      return handlers[subcommand]();
+    'points': async () => {
+      throw new CommandError('The points leaderboard endpoint has been removed. Run "nansen research" to explore other analytics commands.', 'COMMAND_UNAVAILABLE');
     },
 
     'prediction-market': async (args, apiInstance, flags, options) => {
@@ -1832,7 +1815,7 @@ USAGE:
 }
 
 // Categories that moved under 'research'
-export const DEPRECATED_TO_RESEARCH = new Set(['smart-money', 'profiler', 'token', 'search', 'portfolio', 'points']);
+export const DEPRECATED_TO_RESEARCH = new Set(['smart-money', 'profiler', 'token', 'search', 'portfolio']);
 // Subcommands that moved under 'trade'
 export const DEPRECATED_TO_TRADE = new Set(['quote', 'execute']);
 
