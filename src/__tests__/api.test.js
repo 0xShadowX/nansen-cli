@@ -14,7 +14,8 @@ import {
   ErrorCode,
   clearCache,
   COUNTERPARTIES_BATCH_MAX_ADDRESSES,
-  COUNTERPARTIES_BATCH_MAX_DAYS
+  COUNTERPARTIES_BATCH_MAX_DAYS,
+  COUNTERPARTIES_BATCH_CHAINS
 } from '../api.js';
 
 const LIVE_TEST = process.env.NANSEN_LIVE_TEST === '1';
@@ -1267,8 +1268,83 @@ describe('NansenAPI', () => {
 
       it('should reject an unsupported named chain before sending addresses', async () => {
         await expect(
+          api.addressCounterpartiesBatch({ addresses: ['arbitrary-file-line'], chain: 'zksync' })
+        ).rejects.toThrow(/Unsupported chain "zksync" for batch counterparties/);
+        expectNoFetch();
+      });
+
+      // The chain allowlist is the upstream ProfilerChain enum, not this CLI's
+      // EVM_CHAINS set. Those two disagree in both directions (nansen-cli#624
+      // review follow-up), so both directions are pinned here.
+      it('should accept every chain in the endpoint allowlist', () => {
+        expect([...COUNTERPARTIES_BATCH_CHAINS].sort()).toEqual([
+          'all', 'arbitrum', 'arc', 'avalanche', 'base', 'bitcoin', 'bnb',
+          'ethereum', 'hyperevm', 'injective', 'iotaevm', 'linea', 'mantle',
+          'mantra', 'monad', 'near', 'optimism', 'plasma', 'polygon',
+          'robinhood', 'sei', 'solana', 'sonic', 'starknet', 'sui', 'ton',
+          'tron'
+        ]);
+      });
+
+      it.each(['scroll', 'ronin'])(
+        'should reject %s, an EVM chain this CLI knows but the endpoint does not',
+        async unsupported => {
+          await expect(
+            api.addressCounterpartiesBatch({ addresses: [WALLET_A], chain: unsupported })
+          ).rejects.toThrow(new RegExp(`Unsupported chain "${unsupported}" for batch counterparties`));
+          expectNoFetch();
+        }
+      );
+
+      it('should send a non-EVM chain the endpoint supports', async () => {
+        setupMock(MOCK_RESPONSES.addressCounterpartiesBatch);
+
+        await api.addressCounterpartiesBatch({
+          addresses: ['TQ5NMqJjhpQGK7YJbESmJxrhqrHmYgHgfF'],
+          chain: 'tron'
+        });
+
+        const body = expectFetchCalledWith('/api/v1/profiler/address/counterparties/batch');
+        expect(body.chain).toBe('tron');
+        expect(body.wallet_addresses).toEqual(['TQ5NMqJjhpQGK7YJbESmJxrhqrHmYgHgfF']);
+      });
+
+      it('should not lowercase an address on a case-sensitive non-EVM chain', async () => {
+        setupMock(MOCK_RESPONSES.addressCounterpartiesBatch);
+
+        await api.addressCounterpartiesBatch({
+          addresses: ['UQAbC-dEfGhIjKlMnOpQrStUvWxYz0123456789_AbCdEfGhIjKl'],
+          chain: 'ton'
+        });
+
+        const body = expectFetchCalledWith('/api/v1/profiler/address/counterparties/batch');
+        expect(body.wallet_addresses).toEqual(['UQAbC-dEfGhIjKlMnOpQrStUvWxYz0123456789_AbCdEfGhIjKl']);
+      });
+
+      it('should still reject arbitrary --file lines on a chain it cannot format-check', async () => {
+        await expect(
+          api.addressCounterpartiesBatch({ addresses: ['not an address, just a line'], chain: 'tron' })
+        ).rejects.toThrow(/address-shaped token/);
+        expectNoFetch();
+      });
+
+      it('should normalise chain "bsc" to "bnb" and validate as EVM', async () => {
+        setupMock(MOCK_RESPONSES.addressCounterpartiesBatch);
+
+        await api.addressCounterpartiesBatch({
+          addresses: [checksumCased(WALLET_A)],
+          chain: 'bsc'
+        });
+
+        const body = expectFetchCalledWith('/api/v1/profiler/address/counterparties/batch');
+        expect(body.chain).toBe('bnb');
+        expect(body.wallet_addresses).toEqual([WALLET_A]);
+      });
+
+      it('should reject a malformed address on chain "bsc" as an EVM address', async () => {
+        await expect(
           api.addressCounterpartiesBatch({ addresses: ['arbitrary-file-line'], chain: 'bsc' })
-        ).rejects.toThrow(/Unsupported chain "bsc"/);
+        ).rejects.toThrow(/Invalid address "arbitrary-file-line" for chain "bnb": Invalid EVM address format/);
         expectNoFetch();
       });
 
