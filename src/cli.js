@@ -344,7 +344,6 @@ function parseDaysOption(options, flags) {
   return days;
 }
 
-
 // Format a single value for table display
 export function formatValue(val) {
   if (val === null || val === undefined) return '';
