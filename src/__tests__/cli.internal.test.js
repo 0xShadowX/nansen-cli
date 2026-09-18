@@ -4531,6 +4531,9 @@ describe('profiler trace command', () => {
 
     expect(result.root).toBe('0x0000000000000000000000000000000000000001');
     expect(result.depth).toBe(3);
+    expect(mockApi.addressCounterparties).toHaveBeenCalledWith(expect.objectContaining({
+      pagination: { page: 1, per_page: 5 },
+    }));
   });
 
   it('should clamp depth to 1-5 range', async () => {
@@ -4600,6 +4603,74 @@ describe('profiler trace command', () => {
       address: '0x0000000000000000000000000000000000000001',
       delay: '0',
     })).rejects.toThrow('--depth requires a safe integer value');
+
+    expect(mockApi.addressCounterparties).not.toHaveBeenCalled();
+  });
+
+  it.each(['abc', '2.5', 'Infinity', '9007199254740992'])(
+    'should reject malformed --width value %s before querying counterparties',
+    async (width) => {
+      const mockApi = {
+        addressCounterparties: vi.fn().mockResolvedValue({ counterparties: [] }),
+      };
+      const commands = buildCommands({});
+
+      await expect(commands['profiler'](['trace'], mockApi, {}, {
+        address: '0x0000000000000000000000000000000000000001',
+        width,
+        delay: '0',
+      })).rejects.toMatchObject({
+        code: ErrorCode.INVALID_PARAMS,
+        message: '--width must be a non-negative safe integer; received: ' + width,
+      });
+
+      expect(mockApi.addressCounterparties).not.toHaveBeenCalled();
+    },
+  );
+
+  it('should reject repeated valued --width options clearly', async () => {
+    const mockApi = {
+      addressCounterparties: vi.fn().mockResolvedValue({ counterparties: [] }),
+    };
+    const commands = buildCommands({});
+
+    await expect(commands['profiler'](['trace'], mockApi, {}, {
+      address: '0x0000000000000000000000000000000000000001',
+      width: ['2', '3'],
+      delay: '0',
+    })).rejects.toThrow('--width may only be specified once');
+
+    expect(mockApi.addressCounterparties).not.toHaveBeenCalled();
+  });
+
+  it('should reject negative --width before querying counterparties', async () => {
+    const mockApi = {
+      addressCounterparties: vi.fn().mockResolvedValue({ counterparties: [] }),
+    };
+    const commands = buildCommands({});
+
+    await expect(commands['profiler'](['trace'], mockApi, {}, {
+      address: '0x0000000000000000000000000000000000000001',
+      width: '-1',
+      delay: '0',
+    })).rejects.toMatchObject({
+      code: ErrorCode.INVALID_PARAMS,
+      message: '--width must be a non-negative safe integer; received: -1',
+    });
+
+    expect(mockApi.addressCounterparties).not.toHaveBeenCalled();
+  });
+
+  it('should reject bare --width instead of silently using the default', async () => {
+    const mockApi = {
+      addressCounterparties: vi.fn().mockResolvedValue({ counterparties: [] }),
+    };
+    const commands = buildCommands({});
+
+    await expect(commands['profiler'](['trace'], mockApi, { width: true }, {
+      address: '0x0000000000000000000000000000000000000001',
+      delay: '0',
+    })).rejects.toThrow('--width requires a non-negative safe integer value');
 
     expect(mockApi.addressCounterparties).not.toHaveBeenCalled();
   });
