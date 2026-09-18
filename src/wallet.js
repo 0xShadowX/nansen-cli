@@ -826,11 +826,17 @@ export function buildWalletCommands(deps = {}) {
                 }
                 throw new CommandError(`Could not create ${options.file} (${err.code || 'open failed'}). Nothing was written.`, 'FILE_WRITE_FAILED', null, { cause: err });
               }
-              // Linear lifecycle: exactly one write attempt, exactly one close
-              // attempt (a failed closeSync may still have released the fd, so
-              // it is never retried), then a single failure gate.
+              // Linear lifecycle: pin the mode, exactly one write attempt,
+              // exactly one close attempt (a failed closeSync may still have
+              // released the fd, so it is never retried), then a single
+              // failure gate.
               let ioErr = null;
               try {
+                // The 0o600 passed to openSync is filtered through the process
+                // umask (a 0277 umask leaves 0400), so pin the final mode on
+                // the fd we own. Runs before any key bytes land, so a failure
+                // here takes the same unlink path as a failed write.
+                fs.fchmodSync(fd, 0o600);
                 fs.writeFileSync(fd, JSON.stringify(result, null, 2) + '\n');
               } catch (err) {
                 ioErr = err;

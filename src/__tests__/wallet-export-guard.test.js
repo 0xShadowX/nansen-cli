@@ -224,6 +224,49 @@ describe('wallet export --file', () => {
     assertNoKeyMaterial(outputs.join('\n') + tracked, keys);
   });
 
+  it('pins the file to exactly 0600 under a restrictive umask', async () => {
+    const keys = createWalletWithKeys('umask');
+    const outFile = path.join(tempDir, 'umask.json');
+    // 0277 strips the owner write bit from the 0o600 passed to openSync, so
+    // without the fchmod pin the file would land on disk as 0400.
+    const previousUmask = process.umask(0o277);
+    let run;
+    try {
+      run = await runExport(['umask'], {}, { file: outFile });
+    } finally {
+      process.umask(previousUmask);
+    }
+
+    expect(run.error).toBeNull();
+    expect(fs.statSync(outFile).mode & 0o777).toBe(0o600);
+    expect(JSON.parse(fs.readFileSync(outFile, 'utf8')).evm.privateKey).toBe(keys.evmKey);
+    assertNoKeyMaterial(run.logs.join('\n'), keys);
+  });
+
+  it('removes the created file and writes no key bytes when pinning 0600 fails', async () => {
+    const keys = createWalletWithKeys('chmod-fail');
+    const outFile = path.join(tempDir, 'chmod-fail.json');
+    const chmodSpy = vi.spyOn(fs, 'fchmodSync').mockImplementation(() => {
+      const err = new Error('operation not permitted');
+      err.code = 'EPERM';
+      throw err;
+    });
+    const writeSpy = vi.spyOn(fs, 'writeFileSync'); // pass-through, records calls
+
+    const { logs, error } = await runExport(['chmod-fail'], {}, { file: outFile });
+    const fdWrites = writeSpy.mock.calls.filter((c) => typeof c[0] === 'number');
+    chmodSpy.mockRestore();
+    writeSpy.mockRestore();
+
+    expect(error).toBeTruthy();
+    expect(error.code).toBe('FILE_WRITE_FAILED');
+    expect(error.cause?.code).toBe('EPERM');
+    expect(error.message).toContain('Nothing was left on disk');
+    expect(fdWrites).toHaveLength(0); // the write never ran, so no key bytes touched the fd
+    expect(fs.existsSync(outFile)).toBe(false);
+    assertNoKeyMaterial(JSON.stringify({ m: error.message, d: error.details ?? null, c: String(error.cause) }) + logs.join('\n'), keys);
+  });
+
   it('removes a partially written file when the write fails mid-way', async () => {
     const keys = createWalletWithKeys('partial');
     const outFile = path.join(tempDir, 'partial.json');
