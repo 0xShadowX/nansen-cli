@@ -869,7 +869,7 @@ export async function compareWallets(api, params = {}) {
     [addr1, 'balance', bal1], [addr2, 'balance', bal2],
   ]) {
     if (outcome.error) {
-      errors.push({ address, source, code: outcome.error.code, message: outcome.error.message });
+      errors.push({ address, source, code: outcome.error.code ?? 'UNKNOWN', message: outcome.error.message });
     }
   }
   if (errors.length === 4) {
@@ -915,6 +915,9 @@ export async function compareWallets(api, params = {}) {
     for (const t of tokens1) {
       const address = addressOf(t);
       const symbol = t.token_symbol;
+      // With an address on both sides only the address counts. If either
+      // side omits it (as some responses do for the native asset) a matching
+      // symbol is taken as the same token.
       const matched = address
         ? addresses2.has(address) || (symbol && symbolsWithoutAddress2.has(symbol))
         : symbol && symbols2.has(symbol);

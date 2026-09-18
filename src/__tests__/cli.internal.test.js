@@ -5364,6 +5364,25 @@ describe('compareWallets', () => {
     expect(result.balances[1].total_usd).toBe(2000);
   });
 
+  it('should report UNKNOWN for a failure that is not a NansenError', async () => {
+    const mockApi = {
+      addressCounterparties: vi.fn().mockResolvedValue({ counterparties: [] }),
+      addressBalance: vi.fn()
+        .mockResolvedValueOnce({ balances: [] })
+        .mockRejectedValueOnce(new TypeError('fetch failed')),
+    };
+
+    const result = await compareWallets(mockApi, {
+      addresses: ['0x0000000000000000000000000000000000000001', '0x0000000000000000000000000000000000000002'],
+      chain: 'ethereum',
+      delayMs: 0,
+    });
+
+    expect(result.errors).toEqual([
+      { address: '0x0000000000000000000000000000000000000002', source: 'balance', code: 'UNKNOWN', message: 'fetch failed' },
+    ]);
+  });
+
   it('should null the balance total of a wallet whose balance request failed', async () => {
     const mockApi = {
       addressCounterparties: vi.fn().mockResolvedValue({ counterparties: [] }),
