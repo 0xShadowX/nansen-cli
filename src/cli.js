@@ -276,6 +276,40 @@ function parseSafeIntegerOption(
   return value;
 }
 
+function parseFiniteNumberOption(name, options, flags) {
+  if (flags[name]) {
+    throw new NansenError(
+      `--${name} requires a finite number`,
+      ErrorCode.INVALID_PARAMS,
+    );
+  }
+  if (options[name] === undefined) return undefined;
+
+  const rawValue = options[name];
+  if (Array.isArray(rawValue)) {
+    throw new NansenError(
+      `--${name} may only be specified once`,
+      ErrorCode.INVALID_PARAMS,
+    );
+  }
+  if (typeof rawValue === 'string' && rawValue.trim() === '') {
+    throw new NansenError(
+      `--${name} requires a finite number`,
+      ErrorCode.INVALID_PARAMS,
+    );
+  }
+  const value = typeof rawValue === 'string' || typeof rawValue === 'number'
+    ? Number(rawValue)
+    : NaN;
+  if (!Number.isFinite(value)) {
+    throw new NansenError(
+      `--${name} must be a finite number; received: ${String(rawValue)}`,
+      ErrorCode.INVALID_PARAMS,
+    );
+  }
+  return value;
+}
+
 function parseNonNegativeSafeIntegerOption(name, options, flags, defaultValue) {
   const value = parseSafeIntegerOption(
     name,
@@ -1757,20 +1791,21 @@ export function buildCommands(deps = {}) {
       const pagination = buildPagination(options);
 
       // Screener-specific filter options
+      const isScreener = subcommand === 'market-screener' || subcommand === 'event-screener';
       const tags = parseCsvOption(options.tags, 'tags');
-      const minLiquidity = options['min-liquidity'] != null ? Number(options['min-liquidity']) : undefined;
-      const maxLiquidity = options['max-liquidity'] != null ? Number(options['max-liquidity']) : undefined;
-      const minUniqueTraders24h = options['min-unique-traders-24h'] != null ? Number(options['min-unique-traders-24h']) : undefined;
-      const maxUniqueTraders24h = options['max-unique-traders-24h'] != null ? Number(options['max-unique-traders-24h']) : undefined;
-      const minVolume24hr = options['min-volume-24hr'] != null ? Number(options['min-volume-24hr']) : undefined;
-      const maxVolume24hr = options['max-volume-24hr'] != null ? Number(options['max-volume-24hr']) : undefined;
+      const minLiquidity = isScreener ? parseFiniteNumberOption('min-liquidity', options, flags) : undefined;
+      const maxLiquidity = isScreener ? parseFiniteNumberOption('max-liquidity', options, flags) : undefined;
+      const minUniqueTraders24h = isScreener ? parseFiniteNumberOption('min-unique-traders-24h', options, flags) : undefined;
+      const maxUniqueTraders24h = isScreener ? parseFiniteNumberOption('max-unique-traders-24h', options, flags) : undefined;
+      const minVolume24hr = isScreener ? parseFiniteNumberOption('min-volume-24hr', options, flags) : undefined;
+      const maxVolume24hr = isScreener ? parseFiniteNumberOption('max-volume-24hr', options, flags) : undefined;
       const negRisk = resolveBooleanOption(options, flags, 'neg-risk');
-      const minOpenInterest = options['min-open-interest'] != null ? Number(options['min-open-interest']) : undefined;
-      const maxOpenInterest = options['max-open-interest'] != null ? Number(options['max-open-interest']) : undefined;
+      const minOpenInterest = isScreener ? parseFiniteNumberOption('min-open-interest', options, flags) : undefined;
+      const maxOpenInterest = isScreener ? parseFiniteNumberOption('max-open-interest', options, flags) : undefined;
       const endDateBefore = options['end-date-before'];
       const endDateAfter = options['end-date-after'];
-      const minPrice = options['min-price'] != null ? Number(options['min-price']) : undefined;
-      const maxPrice = options['max-price'] != null ? Number(options['max-price']) : undefined;
+      const minPrice = subcommand === 'market-screener' ? parseFiniteNumberOption('min-price', options, flags) : undefined;
+      const maxPrice = subcommand === 'market-screener' ? parseFiniteNumberOption('max-price', options, flags) : undefined;
 
       const handlers = {
         'ohlcv': () => apiInstance.pmOhlcv({ marketId, orderBy, pagination }),
