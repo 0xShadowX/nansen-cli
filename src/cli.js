@@ -849,47 +849,86 @@ export async function compareWallets(api, params = {}) {
     }
   }
 
-  // Fetch counterparties and balances for both addresses
+  // Fetch counterparties and balances for both addresses. A failed request is
+  // recorded rather than treated as an empty result, so an auth or rate-limit
+  // error cannot masquerade as "no overlap" / "0 USD".
+  const settle = (promise) => promise.then(value => ({ value }), error => ({ error }));
   const [cp1, cp2] = await Promise.all([
-    api.addressCounterparties({ address: addr1, chain, days }).catch(() => null),
-    api.addressCounterparties({ address: addr2, chain, days }).catch(() => null),
+    settle(api.addressCounterparties({ address: addr1, chain, days })),
+    settle(api.addressCounterparties({ address: addr2, chain, days })),
   ]);
   await sleep(delayMs);
   const [bal1, bal2] = await Promise.all([
-    api.addressBalance({ address: addr1, chain }).catch(() => null),
-    api.addressBalance({ address: addr2, chain }).catch(() => null),
+    settle(api.addressBalance({ address: addr1, chain })),
+    settle(api.addressBalance({ address: addr2, chain })),
   ]);
+
+  const errors = [];
+  for (const [address, source, outcome] of [
+    [addr1, 'counterparties', cp1], [addr2, 'counterparties', cp2],
+    [addr1, 'balance', bal1], [addr2, 'balance', bal2],
+  ]) {
+    if (outcome.error) {
+      errors.push({ address, source, code: outcome.error.code, message: outcome.error.message });
+    }
+  }
+  if (errors.length === 4) {
+    throw cp1.error;
+  }
 
   // Extract counterparty addresses
   const extractCps = (result) => {
     const list = result?.data?.results || result?.counterparties || result?.data || [];
     return Array.isArray(list) ? list : [];
   };
-  const cps1 = extractCps(cp1);
-  const cps2 = extractCps(cp2);
-  const cpAddrs1 = new Set(cps1.map(c => c.counterparty_address || c.address || c.counterparty).filter(Boolean));
-  const cpAddrs2 = new Set(cps2.map(c => c.counterparty_address || c.address || c.counterparty).filter(Boolean));
-  const sharedCpAddrs = [...cpAddrs1].filter(a => cpAddrs2.has(a));
+  let sharedCpAddrs = null;
+  if (!cp1.error && !cp2.error) {
+    const cpAddrs1 = new Set(extractCps(cp1.value).map(c => c.counterparty_address || c.address || c.counterparty).filter(Boolean));
+    const cpAddrs2 = new Set(extractCps(cp2.value).map(c => c.counterparty_address || c.address || c.counterparty).filter(Boolean));
+    sharedCpAddrs = [...cpAddrs1].filter(a => cpAddrs2.has(a));
+  }
 
   // Extract token holdings
   const extractTokens = (result) => {
     const list = result?.data?.results || result?.balances || result?.data || [];
     return Array.isArray(list) ? list : [];
   };
-  const tokens1 = extractTokens(bal1);
-  const tokens2 = extractTokens(bal2);
-  const tokenSyms1 = new Set(tokens1.map(t => t.token_symbol).filter(Boolean));
-  const tokenSyms2 = new Set(tokens2.map(t => t.token_symbol).filter(Boolean));
-  const sharedTokens = [...tokenSyms1].filter(s => tokenSyms2.has(s));
+  const tokens1 = bal1.error ? null : extractTokens(bal1.value);
+  const tokens2 = bal2.error ? null : extractTokens(bal2.value);
+  let sharedTokens = null;
+  if (tokens1 && tokens2) {
+    // Match on the token address when both sides report one; two different
+    // contracts can share a symbol. Fall back to the symbol only when an
+    // address is missing.
+    const tokenKey = (t) => {
+      const address = t.token_address || t.mint || t.address;
+      if (address) return `addr:${String(address).toLowerCase()}`;
+      return t.token_symbol ? `sym:${t.token_symbol}` : null;
+    };
+    const keys2 = new Set(tokens2.map(tokenKey).filter(Boolean));
+    const seen = new Set();
+    sharedTokens = [];
+    for (const t of tokens1) {
+      const key = tokenKey(t);
+      if (key && keys2.has(key) && !seen.has(key)) {
+        seen.add(key);
+        sharedTokens.push(t.token_symbol || key);
+      }
+    }
+  }
+  const totalUsd = (tokens) => tokens === null
+    ? null
+    : tokens.reduce((sum, t) => sum + (t.value_usd ?? t.balance_usd ?? 0), 0);
 
   return {
     addresses: [addr1, addr2], chain,
     shared_counterparties: sharedCpAddrs,
     shared_tokens: sharedTokens,
     balances: [
-      { address: addr1, total_usd: tokens1.reduce((sum, t) => sum + (t.value_usd ?? t.balance_usd ?? 0), 0) },
-      { address: addr2, total_usd: tokens2.reduce((sum, t) => sum + (t.value_usd ?? t.balance_usd ?? 0), 0) },
+      { address: addr1, total_usd: totalUsd(tokens1) },
+      { address: addr2, total_usd: totalUsd(tokens2) },
     ],
+    ...(errors.length > 0 && { incomplete: true, errors }),
   };
 }
 
