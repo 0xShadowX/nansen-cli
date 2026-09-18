@@ -96,8 +96,8 @@ export const ErrorCode = {
  * parse (e.g. PASSWORD_REQUIRED, API_KEY_REQUIRED).
  */
 export class CommandError extends Error {
-  constructor(message, code = 'COMMAND_ERROR', data = null) {
-    super(message);
+  constructor(message, code = 'COMMAND_ERROR', data = null, options = undefined) {
+    super(message, options); // options.cause keeps the originating error attached
     this.name = 'CommandError';
     this.code = code;
     this.data = data;
