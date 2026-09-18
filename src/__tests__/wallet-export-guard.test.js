@@ -334,13 +334,52 @@ describe('wallet export — parser interaction', () => {
     expect(positional).toEqual(['wallet', 'export', 'alice']);
   });
 
-  it('never silently reveals on "--file --reveal" ordering', async () => {
+  it('"--file --reveal" ordering is rejected by the bare --file guard before any decryption', async () => {
     const keys = createWalletWithKeys('ordering');
+    // With no password available, reaching the decryption path could only fail
+    // with PASSWORD_REQUIRED — so an INVALID_INPUT proves the guard fired first.
+    delete process.env.NANSEN_WALLET_PASSWORD;
+
+    // `reveal` is a valueless flag, so `--file` gets no value: the parser yields
+    // flags.file = true and no options.file. That trips the bare-`--file` guard,
+    // which intentionally runs before the --reveal/--file conflict guard, so
+    // this ordering never reaches the "not both" message. Both guards throw
+    // INVALID_INPUT without decrypting; this test pins which one fires.
     const parsed = parseArgs(['export', 'ordering', '--file', '--reveal']);
+    expect(parsed.flags).toEqual({ file: true, reveal: true });
+    expect(parsed.options.file).toBeUndefined();
+
     const { logs, error } = await runExport(['ordering'], parsed.flags, parsed.options);
     expect(error).toBeTruthy();
     expect(error.code).toBe('INVALID_INPUT');
-    assertNoKeyMaterial(logs.join('\n'), keys);
+    expect(error.message).toContain('--file requires a path');
+    expect(error.message).not.toContain('not both');
+    expect(logs).toEqual([]);
+    assertNoKeyMaterial(
+      JSON.stringify({ m: error.message, d: error.details ?? null, c: String(error.cause ?? '') }),
+      keys
+    );
+  });
+
+  it('"--file <path> --reveal" ordering is rejected by the conflict guard before any decryption', async () => {
+    const keys = createWalletWithKeys('ordering-conflict');
+    delete process.env.NANSEN_WALLET_PASSWORD;
+    const outFile = path.join(tempDir, 'conflict.json');
+
+    const parsed = parseArgs(['export', 'ordering-conflict', '--file', outFile, '--reveal']);
+    expect(parsed.options.file).toBe(outFile);
+    expect(parsed.flags.reveal).toBe(true);
+
+    const { logs, error } = await runExport(['ordering-conflict'], parsed.flags, parsed.options);
+    expect(error).toBeTruthy();
+    expect(error.code).toBe('INVALID_INPUT');
+    expect(error.message).toContain('not both');
+    expect(fs.existsSync(outFile)).toBe(false);
+    expect(logs).toEqual([]);
+    assertNoKeyMaterial(
+      JSON.stringify({ m: error.message, d: error.details ?? null, c: String(error.cause ?? '') }),
+      keys
+    );
   });
 });
 
