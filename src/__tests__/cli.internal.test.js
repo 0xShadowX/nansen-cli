@@ -1762,6 +1762,34 @@ describe('formatOutput', () => {
     expect(result.type).toBe('error');
     expect(result.text).toBe('Error: Oops');
   });
+
+  it('should keep code, status and details as key/value lines in table mode', () => {
+    const envelope = formatError(new NansenError('Rate limited', ErrorCode.RATE_LIMITED, 429, { rateLimit: { resetSeconds: 30 } }));
+    const result = formatOutput(envelope, { table: true });
+    expect(result.type).toBe('error');
+    expect(result.text.split('\n')).toEqual([
+      'Error: Rate limited',
+      'code: RATE_LIMITED',
+      'status: 429',
+      'details: {"rateLimit":{"resetSeconds":30}}',
+    ]);
+  });
+
+  it('should omit null fields from table error output', () => {
+    const envelope = formatError(new NansenError('Bad input', ErrorCode.INVALID_PARAMS));
+    const result = formatOutput(envelope, { table: true });
+    expect(result.text).toBe('Error: Bad input\ncode: INVALID_PARAMS');
+  });
+
+  it('should render the error envelope as a CSV header and row in csv mode', () => {
+    const envelope = formatError(new NansenError('Rate limited', ErrorCode.RATE_LIMITED, 429, { rateLimit: { resetSeconds: 30 } }));
+    const result = formatOutput(envelope, { csv: true });
+    expect(result.type).toBe('error');
+    expect(result.text.split('\n')).toEqual([
+      'success,error,code,status,details',
+      'false,Rate limited,RATE_LIMITED,429,"{""rateLimit"":{""resetSeconds"":30}}"',
+    ]);
+  });
 });
 
 describe('formatError', () => {
@@ -5114,6 +5142,49 @@ describe('--format csv integration', () => {
     expect(lines[0]).toContain('symbol');
     expect(lines[1]).toContain('SOL');
     expect(lines[2]).toContain('ETH');
+  });
+});
+
+describe('rejected API call output in --table and --format csv', () => {
+  let outputs;
+  let exitCode;
+
+  const rejectingDeps = () => ({
+    output: (msg) => outputs.push(msg),
+    errorOutput: () => {},
+    exit: (code) => { exitCode = code; },
+    NansenAPIClass: function MockAPI() {
+      this.smartMoneyNetflow = vi.fn().mockRejectedValue(
+        new NansenError('Rate limited', ErrorCode.RATE_LIMITED, 429, { rateLimit: { resetSeconds: 30 } })
+      );
+    }
+  });
+
+  beforeEach(() => {
+    outputs = [];
+    exitCode = null;
+  });
+
+  it('keeps code and status in --table error output', async () => {
+    const result = await runCLI(['smart-money', 'netflow', '--table'], rejectingDeps());
+    expect(result.type).toBe('error');
+    expect(exitCode).toBe(1);
+    expect(outputs[0].split('\n')).toEqual([
+      'Error: Rate limited',
+      'code: RATE_LIMITED',
+      'status: 429',
+      'details: {"rateLimit":{"resetSeconds":30}}',
+    ]);
+  });
+
+  it('emits a parseable CSV error row for --format csv', async () => {
+    const result = await runCLI(['smart-money', 'netflow', '--format', 'csv'], rejectingDeps());
+    expect(result.type).toBe('error');
+    expect(exitCode).toBe(1);
+    expect(outputs[0].split('\n')).toEqual([
+      'success,error,code,status,details',
+      'false,Rate limited,RATE_LIMITED,429,"{""rateLimit"":{""resetSeconds"":30}}"',
+    ]);
   });
 });
 
