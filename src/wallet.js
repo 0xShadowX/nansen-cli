@@ -818,8 +818,10 @@ export function buildWalletCommands(deps = {}) {
               try {
                 fd = fs.openSync(options.file, 'wx', 0o600);
               } catch (err) {
-                if (err.code === 'EEXIST') {
-                  // EEXIST also covers directories and symlinks, so don't advise deleting it.
+                if (err.code === 'EEXIST' || err.code === 'EISDIR') {
+                  // Linux reports an existing directory (or symlink) as EEXIST; macOS
+                  // can report a directory as EISDIR. Both mean "already there", so
+                  // neither advises deleting it.
                   throw new CommandError(`Path already exists: ${options.file} — refusing to overwrite. Choose a path that does not exist yet.`, 'FILE_EXISTS', null, { cause: err });
                 }
                 throw new CommandError(`Could not create ${options.file} (${err.code || 'open failed'}). Nothing was written.`, 'FILE_WRITE_FAILED', null, { cause: err });

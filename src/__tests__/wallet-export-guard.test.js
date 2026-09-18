@@ -285,9 +285,38 @@ describe('wallet export --file', () => {
     expect(error).toBeTruthy();
     expect(error.message).toContain('refusing to overwrite');
     expect(error.code).toBe('FILE_EXISTS');
+    // Linux reports a directory target as EEXIST, macOS may report EISDIR.
+    expect(['EEXIST', 'EISDIR']).toContain(error.cause?.code);
     expect(error.message).not.toContain('Delete');
     expect(fs.statSync(tempDir).isDirectory()).toBe(true);
     assertNoKeyMaterial(logs.join('\n') + error.message, keys);
+  });
+
+  it('maps an EISDIR from the exclusive create to FILE_EXISTS (macOS directory target)', async () => {
+    const keys = createWalletWithKeys('eisdir-target');
+    const outFile = path.join(tempDir, 'is-a-dir.json');
+    const realOpen = fs.openSync.bind(fs);
+    // Only the 'wx' create is intercepted; every other open in the flow is real.
+    const spy = vi.spyOn(fs, 'openSync').mockImplementation((target, flags, mode) => {
+      if (target === outFile && flags === 'wx') {
+        const err = new Error('illegal operation on a directory');
+        err.code = 'EISDIR';
+        throw err;
+      }
+      return realOpen(target, flags, mode);
+    });
+
+    const { logs, error } = await runExport(['eisdir-target'], {}, { file: outFile });
+    spy.mockRestore();
+
+    expect(error).toBeTruthy();
+    expect(error.code).toBe('FILE_EXISTS');
+    expect(error.message).toContain('refusing to overwrite');
+    expect(error.message).not.toContain('Nothing was written');
+    expect(error.message).not.toContain('Delete');
+    expect(error.cause?.code).toBe('EISDIR');
+    expect(fs.existsSync(outFile)).toBe(false);
+    assertNoKeyMaterial(JSON.stringify({ m: error.message, d: error.details ?? null, c: String(error.cause) }) + logs.join('\n'), keys);
   });
 
   it('rejects --reveal combined with --file', async () => {
