@@ -46,7 +46,6 @@ const researchCases = [
   ['profiler', 'batch', 'delay'],
   ['profiler', 'trace', 'delay'],
   ['profiler', 'trace', 'depth'],
-  ['profiler', 'trace', 'width'],
   ['smart-money', 'netflow', 'chain'],
   ['smart-money', 'netflow', 'chains'],
   ['profiler', 'balance', 'chain'],
@@ -124,6 +123,18 @@ describe.each(['', ' \t '])('explicit blank option %j', blank => {
       token: 'So11111111111111111111111111111111111111112', [name]: blank,
     })).rejects.toMatchObject({ code: 'MISSING_PARAM', message: expect.stringContaining(`--${name} requires a value`) });
     for (const method of Object.values(api)) expect(method).not.toHaveBeenCalled();
+  });
+
+  it('rejects research profiler trace blank --width via integer validation', async () => {
+    const api = { addressCounterparties: vi.fn().mockResolvedValue({ data: [] }) };
+    await expect(buildCommands(deps).research(['profiler', 'trace'], api, {}, {
+      address: '0x1111111111111111111111111111111111111111',
+      width: blank,
+    })).rejects.toMatchObject({
+      code: 'INVALID_PARAMS',
+      message: expect.stringContaining('--width requires a non-negative safe integer value'),
+    });
+    expect(api.addressCounterparties).not.toHaveBeenCalled();
   });
 
   it.each([

@@ -1526,7 +1526,6 @@ export function buildCommands(deps = {}) {
         'trace': () => {
           rejectBlankOption(options.delay, 'delay', '1000');
           rejectBlankOption(options.depth, 'depth', '2');
-          rejectBlankOption(options.width, 'width', '10');
           if (flags.depth) {
             throw new NansenError(
               '--depth requires a safe integer value',
@@ -1534,7 +1533,7 @@ export function buildCommands(deps = {}) {
             );
           }
           const depth = options.depth ?? 2;
-          const width = options.width ? parseInt(options.width) : 10;
+          const width = parseNonNegativeSafeIntegerOption('width', options, flags, 10);
           const delayMs = options.delay ? parseInt(options.delay) : 1000;
           return traceCounterparties(apiInstance, { address, chain, depth, width, days, delayMs });
         },

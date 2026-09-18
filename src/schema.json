@@ -787,7 +787,8 @@
                   "description": "Hops to follow from the starting address (1-5); valid integers outside the range are clamped"
                 },
                 "width": {
-                  "type": "number",
+                  "type": "integer",
+                  "minimum": 0,
                   "default": 10,
                   "description": "Counterparties to follow at each hop"
                 },
