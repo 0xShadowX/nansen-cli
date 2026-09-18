@@ -5409,6 +5409,46 @@ describe('compareWallets', () => {
     expect(result.incomplete).toBeUndefined();
   });
 
+  it('should fall back to the symbol when only one side reports a token address', async () => {
+    const mockApi = {
+      addressCounterparties: vi.fn().mockResolvedValue({ counterparties: [] }),
+      addressBalance: vi.fn()
+        .mockResolvedValueOnce({ balances: [
+          { token_symbol: 'ETH', token_address: '0x0000000000000000000000000000000000000000', value_usd: 1 },
+          { token_symbol: 'ABC', value_usd: 1 },
+        ] })
+        .mockResolvedValueOnce({ balances: [
+          { token_symbol: 'ETH', value_usd: 1 },
+          { token_symbol: 'ABC', token_address: '0xabc', value_usd: 1 },
+        ] }),
+    };
+
+    const result = await compareWallets(mockApi, {
+      addresses: ['0x0000000000000000000000000000000000000001', '0x0000000000000000000000000000000000000002'],
+      chain: 'ethereum',
+      delayMs: 0,
+    });
+
+    expect(result.shared_tokens).toEqual(['ETH', 'ABC']);
+  });
+
+  it('should label a shared token by its address when the symbol is empty', async () => {
+    const mockApi = {
+      addressCounterparties: vi.fn().mockResolvedValue({ counterparties: [] }),
+      addressBalance: vi.fn()
+        .mockResolvedValueOnce({ balances: [{ token_symbol: '', token_address: '0xABCD', value_usd: 1 }] })
+        .mockResolvedValueOnce({ balances: [{ token_symbol: '', token_address: '0xabcd', value_usd: 1 }] }),
+    };
+
+    const result = await compareWallets(mockApi, {
+      addresses: ['0x0000000000000000000000000000000000000001', '0x0000000000000000000000000000000000000002'],
+      chain: 'ethereum',
+      delayMs: 0,
+    });
+
+    expect(result.shared_tokens).toEqual(['0xabcd']);
+  });
+
   it('should fall back to the symbol when neither side reports a token address', async () => {
     const mockApi = {
       addressCounterparties: vi.fn().mockResolvedValue({ counterparties: [] }),

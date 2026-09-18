@@ -897,22 +897,31 @@ export async function compareWallets(api, params = {}) {
   const tokens2 = bal2.error ? null : extractTokens(bal2.value);
   let sharedTokens = null;
   if (tokens1 && tokens2) {
-    // Match on the token address when both sides report one; two different
-    // contracts can share a symbol. Fall back to the symbol only when an
-    // address is missing.
-    const tokenKey = (t) => {
+    // Two different contracts can share a symbol, so when both sides report a
+    // token address the address decides. When either side has no address for
+    // a token (some responses omit it for the native asset) the symbol is the
+    // only identity available and is used instead.
+    const addressOf = (t) => {
       const address = t.token_address || t.mint || t.address;
-      if (address) return `addr:${String(address).toLowerCase()}`;
-      return t.token_symbol ? `sym:${t.token_symbol}` : null;
+      return address ? String(address).toLowerCase() : null;
     };
-    const keys2 = new Set(tokens2.map(tokenKey).filter(Boolean));
+    const addresses2 = new Set(tokens2.map(addressOf).filter(Boolean));
+    const symbols2 = new Set(tokens2.map(t => t.token_symbol).filter(Boolean));
+    const symbolsWithoutAddress2 = new Set(
+      tokens2.filter(t => !addressOf(t)).map(t => t.token_symbol).filter(Boolean)
+    );
     const seen = new Set();
     sharedTokens = [];
     for (const t of tokens1) {
-      const key = tokenKey(t);
-      if (key && keys2.has(key) && !seen.has(key)) {
-        seen.add(key);
-        sharedTokens.push(t.token_symbol || key);
+      const address = addressOf(t);
+      const symbol = t.token_symbol;
+      const matched = address
+        ? addresses2.has(address) || (symbol && symbolsWithoutAddress2.has(symbol))
+        : symbol && symbols2.has(symbol);
+      const label = symbol || address;
+      if (matched && label && !seen.has(label)) {
+        seen.add(label);
+        sharedTokens.push(label);
       }
     }
   }
