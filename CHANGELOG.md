@@ -1,5 +1,53 @@
 # Changelog
 
+## 1.45.0
+
+### Minor Changes
+
+- [#624](https://github.com/nansen-ai/nansen-cli/pull/624) [`8bd2f00`](https://github.com/nansen-ai/nansen-cli/commit/8bd2f0057fce09d1fce8c91dd5d2128c3c9ce25d) Thanks [@gulshngill](https://github.com/gulshngill)! - Add `nansen research profiler counterparties-batch` — top counterparties for up to 10 wallets in a single request. Takes `--addresses "0xabc,0xdef"` (comma-separated or a JSON array) or `--file`, validates the 10-address and 90-day limits client-side, and returns rows tagged with the `wallet_address` they belong to (results are not aggregated across wallets). `--chain` defaults to `all`, which auto-detects the ecosystem; one ecosystem per request, as EVM and Solana addresses cannot be mixed.
+
+### Patch Changes
+
+- [#643](https://github.com/nansen-ai/nansen-cli/pull/643) [`b459772`](https://github.com/nansen-ai/nansen-cli/commit/b4597722c26b95dbd4eedb5b93f8a5dd9042be10) Thanks [@Codier](https://github.com/Codier)! - Ignore failed and malformed OpenAPI responses when refreshing the credit-cost cache. A non-2xx response that still returned JSON replaced the cached cost map with an empty one and stamped it fresh, so credit estimates went missing for up to 24 hours and the next refresh was suppressed.
+
+- [#634](https://github.com/nansen-ai/nansen-cli/pull/634) [`a5a3b27`](https://github.com/nansen-ai/nansen-cli/commit/a5a3b27d9f8fe58ba87a37bec24c2cc627d64fda) Thanks [@Bruce039](https://github.com/Bruce039)! - Avoid caching failed or malformed update-check responses as fresh results, so transient registry errors are retried instead of suppressing checks for 24 hours.
+
+- [#637](https://github.com/nansen-ai/nansen-cli/pull/637) [`a0f889d`](https://github.com/nansen-ai/nansen-cli/commit/a0f889d02b9b5bcb729ba82a7ad150a2dadc31c9) Thanks [@gulshngill](https://github.com/gulshngill)! - Fix the `--chain` allowlist on `nansen research profiler counterparties-batch`. It was built from the CLI's internal EVM chain list, which disagreed with the endpoint in both directions: `scroll` and `ronin` were accepted and always 422'd upstream, while every non-EVM chain the profiler serves (`bitcoin`, `tron`, `sui`, `ton`, `near`, `injective`, `mantra`, `robinhood`, `arc`, `starknet`) was rejected client-side. The allowlist is now the endpoint's own `ProfilerChain` enum, and `--chain bsc` is accepted and sent as `bnb`. Addresses on a chain whose format the CLI cannot check are still required to be address-shaped, so a newline `--file` cannot post arbitrary lines as wallet addresses; TON accepts both friendly and raw (`0:`/`-1:` plus 64 hex) addresses.
+
+- [#645](https://github.com/nansen-ai/nansen-cli/pull/645) [`dda318e`](https://github.com/nansen-ai/nansen-cli/commit/dda318e72812fc567d3abd1c0e8282aa3c367133) Thanks [@gulshngill](https://github.com/gulshngill)! - Declare the `DELETE /api/v1/smart-alert/{alertId}` route the `alerts delete` command already calls in `src/schema.json`. This was the last route in the parity checker's schema-drift list; the sibling routes (list/create/update/toggle/account/web/agent) were declared in #549.
+
+- [#640](https://github.com/nansen-ai/nansen-cli/pull/640) [`60961cf`](https://github.com/nansen-ai/nansen-cli/commit/60961cf9bcb828bc85caccb7b55c09b664e46aac) Thanks [@hulk-linus](https://github.com/apps/hulk-linus)! - Fix `parseArgs` treating an explicit empty-string option value (`--flag ""`) as a boolean flag and leaking the `""` into positional arguments. `nansen web fetch <url> --question ""` now reports the blank-question error instead of `Invalid URL: ""`.
+
+  Register `--all`, `--max`, `--gasless`, `--auto-slippage`, and `--unsafe-no-password` as valueless flags. They are read only as booleans, so a following token such as `nansen perp meta --all` plus an asset name was parsed as their value and the switch went dead.
+
+  Reject a blank `nansen mcp verify --url ""` instead of falling back to the default Nansen endpoint, which reported the default URL as verified when the caller passed an unset shell variable.
+
+  Reject a blank `--slippage` or `--max-auto-slippage` on `nansen trade quote`. An empty string became `0` in the range check, satisfied the rule that `--swap-mode exactOut --auto-slippage` needs an explicit cap, and was then dropped when the request was built, so the ERC-20 approval was scoped by a cap that never reached the server.
+
+  Reject a blank `nansen web fetch --url ""` instead of dropping it and fetching only the positional URLs.
+
+- [#644](https://github.com/nansen-ai/nansen-cli/pull/644) [`14bbd9b`](https://github.com/nansen-ai/nansen-cli/commit/14bbd9b273a570953d02900acb21aeed81ac1bfe) Thanks [@hulk-linus](https://github.com/apps/hulk-linus)! - Reject explicitly blank quote options, execute and limit-order wallet selectors, limit-order expiry and list options, wallet creation names and send options, and research chain/timeframe, days, buy-or-sell, and profiler batch/trace tuning options with an actionable error instead of selecting defaults. Preserve numeric zero slippage caps in programmatic quote requests.
+
+- [#542](https://github.com/nansen-ai/nansen-cli/pull/542) [`055488a`](https://github.com/nansen-ai/nansen-cli/commit/055488a1b9a9a85994b12af0245e3a9139b8238f) Thanks [@gulshngill](https://github.com/gulshngill)! - Stop calling the removed points leaderboard API route. Both `points leaderboard` and `research points leaderboard` now return a structured unavailable error and exit with a failure status, without suggesting the other unavailable command as a replacement.
+
+- [#549](https://github.com/nansen-ai/nansen-cli/pull/549) [`28714c6`](https://github.com/nansen-ai/nansen-cli/commit/28714c6a2f89fbd8965e84916e9f185883b3cd27) Thanks [@gulshngill](https://github.com/gulshngill)! - Declare the API routes `alerts`, `account`, `web` and `agent` already call in `src/schema.json`. The schema is what shell completions, `--help` and docs tooling read, so eight routes the code requests were invisible to them (and to the API/MCP/CLI parity check).
+
+- [#647](https://github.com/nansen-ai/nansen-cli/pull/647) [`2b84502`](https://github.com/nansen-ai/nansen-cli/commit/2b8450254515a2e0aa1b3e973332a2362a85f8ea) Thanks [@kome12](https://github.com/kome12)! - Reject invalid profiler trace width values instead of returning an empty-looking trace.
+
+- [#642](https://github.com/nansen-ai/nansen-cli/pull/642) [`b6c928f`](https://github.com/nansen-ai/nansen-cli/commit/b6c928fc458a216aff3ac1f4961f8aaf4a02eceb) Thanks [@kome12](https://github.com/kome12)! - Validate `nansen alerts` string/array options (`--chains`, `--token`/`--exclude-token`, `--subject`/`--counterparty`/`--caller`/`--contract` and their `--exclude-*` variants, `--events`, `--signature-hash`, `--token-sector`/`--exclude-token-sector`, and `alerts list --token-address`/`--chain`) so JSON primitives (e.g. `--chains true`) produce actionable `INVALID_PARAMS` errors instead of a raw `TypeError` crash or being silently dropped/passed through into the alert payload.
+
+- [#630](https://github.com/nansen-ai/nansen-cli/pull/630) [`7cb8bb2`](https://github.com/nansen-ai/nansen-cli/commit/7cb8bb2ecd4cd2e1a302b43de73ef2b015dc42d6) Thanks [@kriss39](https://github.com/kriss39)! - Validate supported analytics `--days` values as non-negative integers with a representable date range instead of truncating malformed inputs or forwarding `NaN`.
+
+- [#639](https://github.com/nansen-ai/nansen-cli/pull/639) [`17e4f64`](https://github.com/nansen-ai/nansen-cli/commit/17e4f648412057c0012cd5ea464be10363be893e) Thanks [@kome12](https://github.com/kome12)! - Validate more CLI string options (`profiler batch --include`, `perp screener --sectors-filter`/`--sm-label-filter`/`--trader-label-filter`, `prediction-market market-screener`/`event-screener --tags`, and `--fields`) so JSON primitives produce actionable `INVALID_PARAMS` errors instead of raw `.split()`/`.trim()` TypeErrors.
+
+- [#632](https://github.com/nansen-ai/nansen-cli/pull/632) [`d9c7e6e`](https://github.com/nansen-ai/nansen-cli/commit/d9c7e6e6ea9615ee9534cafc960d54a2dadc0160) Thanks [@Bruce039](https://github.com/Bruce039)! - Reject malformed or valueless `--date` inputs instead of silently falling back to the rolling `--days` range.
+
+- [#631](https://github.com/nansen-ai/nansen-cli/pull/631) [`17cbed5`](https://github.com/nansen-ai/nansen-cli/commit/17cbed5e8a286ebebaefe893ee6a0198188ff379) Thanks [@Bruce039](https://github.com/Bruce039)! - Reject malformed and non-finite prediction-market screener numeric filters before they can be serialized as `null` or silently ignored.
+
+- [#629](https://github.com/nansen-ai/nansen-cli/pull/629) [`b802bca`](https://github.com/nansen-ai/nansen-cli/commit/b802bca7ad5352ba03226fdbc64e97a3f4496d03) Thanks [@kriss39](https://github.com/kriss39)! - Reject malformed, fractional, non-finite, repeated, or valueless `profiler trace --depth` inputs while preserving the existing 1-5 clamping behavior for valid integers.
+
+- [#633](https://github.com/nansen-ai/nansen-cli/pull/633) [`901f63e`](https://github.com/nansen-ai/nansen-cli/commit/901f63e522cdbbf773f055d928a415f99d02bf94) Thanks [@Bruce039](https://github.com/Bruce039)! - Validate web `--query` and `--question` option types so JSON primitives produce actionable CLI errors instead of raw `.trim()` TypeErrors.
+
 ## 1.44.3
 
 ### Patch Changes
