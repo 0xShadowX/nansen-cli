@@ -164,12 +164,64 @@ describe('wallet export --file', () => {
     const { logs, error } = await runExport(['no-clobber'], {}, { file: outFile });
     expect(error).toBeTruthy();
     expect(error.message).toContain('refusing to overwrite');
+    expect(error.code).toBe('FILE_EXISTS');
+    expect(error.cause?.code).toBe('EEXIST');
     expect(fs.readFileSync(outFile, 'utf8')).toBe('precious');
 
     // Keys were already decrypted when the write failed — the error envelope,
-    // its details, and everything logged must still be key-free.
-    assertNoKeyMaterial(JSON.stringify({ message: error.message, details: error.details ?? null }), keys);
+    // its details, its cause, and everything logged must still be key-free.
+    assertNoKeyMaterial(JSON.stringify({ message: error.message, details: error.details ?? null, cause: String(error.cause) }), keys);
     assertNoKeyMaterial(logs.join('\n'), keys);
+  });
+
+  it('reports a non-EEXIST create failure as FILE_WRITE_FAILED, leaking nothing', async () => {
+    const keys = createWalletWithKeys('no-parent');
+    const outFile = path.join(tempDir, 'missing-dir', 'export.json'); // parent does not exist → ENOENT
+
+    const { logs, error } = await runExport(['no-parent'], {}, { file: outFile });
+    expect(error).toBeTruthy();
+    expect(error.code).toBe('FILE_WRITE_FAILED');
+    expect(error.cause?.code).toBe('ENOENT');
+    expect(error.message).toContain('Nothing was written');
+    expect(fs.existsSync(outFile)).toBe(false);
+    assertNoKeyMaterial(JSON.stringify({ m: error.message, d: error.details ?? null, c: String(error.cause) }), keys);
+    assertNoKeyMaterial(logs.join('\n'), keys);
+  });
+
+  it('keeps EXPORT_FAILED for decryption failures on the --file path and creates no file', async () => {
+    const keys = createWalletWithKeys('file-wrong-pw');
+    const outFile = path.join(tempDir, 'never.json');
+    process.env.NANSEN_WALLET_PASSWORD = 'wrong-password-123';
+
+    const { logs, error } = await runExport(['file-wrong-pw'], {}, { file: outFile });
+    expect(error).toBeTruthy();
+    expect(error.code).toBe('EXPORT_FAILED');
+    expect(fs.existsSync(outFile)).toBe(false);
+    assertNoKeyMaterial(JSON.stringify({ m: error.message, d: error.details ?? null }) + logs.join('\n'), keys);
+  });
+
+  it('surfaces FILE_EXISTS as the machine-readable code in the JSON error envelope', async () => {
+    const keys = createWalletWithKeys('envelope');
+    const outFile = path.join(tempDir, 'taken.json');
+    fs.writeFileSync(outFile, 'precious');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true }));
+    const outputs = [];
+
+    await runCLI(['wallet', 'export', 'envelope', '--file', outFile], {
+      output: (m) => outputs.push(String(m)),
+      log: () => {},
+      errorOutput: () => {},
+      exit: () => {},
+      isTTY: false,
+    });
+
+    const envelope = JSON.parse(outputs.join(''));
+    expect(envelope.success).toBe(false);
+    expect(envelope.code).toBe('FILE_EXISTS');
+    expect(fs.readFileSync(outFile, 'utf8')).toBe('precious');
+    const tracked = JSON.stringify(trackFailed.mock.calls);
+    expect(tracked).toContain('FILE_EXISTS');
+    assertNoKeyMaterial(outputs.join('\n') + tracked, keys);
   });
 
   it('removes a partially written file when the write fails mid-way', async () => {
@@ -191,9 +243,11 @@ describe('wallet export --file', () => {
     spy.mockRestore();
 
     expect(error).toBeTruthy();
+    expect(error.code).toBe('FILE_WRITE_FAILED');
+    expect(error.cause?.code).toBe('ENOSPC');
     expect(error.message).toContain('Nothing was left on disk');
     expect(fs.existsSync(outFile)).toBe(false);
-    assertNoKeyMaterial(JSON.stringify({ m: error.message, d: error.details ?? null }), keys);
+    assertNoKeyMaterial(JSON.stringify({ m: error.message, d: error.details ?? null, c: String(error.cause) }), keys);
   });
 
   it('rejects a bare --file (parsed as a boolean flag) before decrypting', async () => {
@@ -230,6 +284,7 @@ describe('wallet export --file', () => {
     const { logs, error } = await runExport(['dir-target'], {}, { file: tempDir });
     expect(error).toBeTruthy();
     expect(error.message).toContain('refusing to overwrite');
+    expect(error.code).toBe('FILE_EXISTS');
     expect(error.message).not.toContain('Delete');
     expect(fs.statSync(tempDir).isDirectory()).toBe(true);
     assertNoKeyMaterial(logs.join('\n') + error.message, keys);

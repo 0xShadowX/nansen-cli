@@ -810,17 +810,19 @@ export function buildWalletCommands(deps = {}) {
               // Exclusive create first, write second: unlink-on-failure below
               // is only safe on a file THIS invocation created — a blind 'wx'
               // writeFileSync can fail (e.g. EMFILE) without telling us whether
-              // the path pre-existed. Errors are rewrapped so no raw fs message
-              // (key-free, but noisy) reaches the envelope.
+              // the path pre-existed. Failures are thrown as CommandErrors with
+              // purpose-specific codes (FILE_EXISTS / FILE_WRITE_FAILED) so agents
+              // branch on the code instead of the message; the raw fs error
+              // (key-free, but noisy) stays attached as `cause`, out of the envelope.
               let fd;
               try {
                 fd = fs.openSync(options.file, 'wx', 0o600);
               } catch (err) {
                 if (err.code === 'EEXIST') {
                   // EEXIST also covers directories and symlinks, so don't advise deleting it.
-                  throw new Error(`Path already exists: ${options.file} — refusing to overwrite. Choose a path that does not exist yet.`, { cause: err });
+                  throw new CommandError(`Path already exists: ${options.file} — refusing to overwrite. Choose a path that does not exist yet.`, 'FILE_EXISTS', null, { cause: err });
                 }
-                throw new Error(`Could not create ${options.file} (${err.code || 'open failed'}). Nothing was written.`, { cause: err });
+                throw new CommandError(`Could not create ${options.file} (${err.code || 'open failed'}). Nothing was written.`, 'FILE_WRITE_FAILED', null, { cause: err });
               }
               // Linear lifecycle: exactly one write attempt, exactly one close
               // attempt (a failed closeSync may still have released the fd, so
@@ -847,7 +849,7 @@ export function buildWalletCommands(deps = {}) {
                     disk = `A partial file may remain at ${options.file} — delete it manually.`;
                   }
                 }
-                throw new Error(`Could not write ${options.file} (${ioErr.code || 'write failed'}). ${disk}`, { cause: ioErr });
+                throw new CommandError(`Could not write ${options.file} (${ioErr.code || 'write failed'}). ${disk}`, 'FILE_WRITE_FAILED', null, { cause: ioErr });
               }
               log(`\n✓ Private keys for "${result.name}" written to ${options.file} (permissions 0600).`);
               log('  Delete the file as soon as the keys are imported elsewhere.');
@@ -868,6 +870,9 @@ export function buildWalletCommands(deps = {}) {
             log('');
             return;
           } catch (err) {
+            // --file failures already carry their own code; only exportWallet
+            // (decrypt / lookup) failures need the generic wrap.
+            if (err instanceof CommandError) throw err;
             throw new CommandError(`❌ ${err.message}`, 'EXPORT_FAILED');
           }
         },
