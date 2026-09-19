@@ -11,7 +11,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { NansenAPI } from '../api.js';
-import { runCLI } from '../cli.js';
+import { runCLI, parseArgs } from '../cli.js';
 import { isDebugEnabled, setDebugEnabled } from '../debug.js';
 
 const FAKE_API_KEY = 'test-key-00000000000000000000000000000000';
@@ -169,6 +169,30 @@ describe('--debug flag wiring', () => {
     // `auth status` is the offline command — it makes no request of its own,
     // so this asserts the flag alone, with nothing else in the way.
     await runCLI(['auth', 'status', '--debug'], {
+      output: () => {},
+      log: () => {},
+      errorOutput: () => {},
+      exit: () => {},
+      isTTY: false,
+    });
+
+    expect(isDebugEnabled()).toBe(true);
+    setDebugEnabled(undefined);
+  });
+
+  it('works before the command name, without swallowing it', async () => {
+    // A global flag is naturally typed first. `--debug` must not consume the
+    // command word as its value, which would leave the run undebugged and
+    // dispatch a different command than the one asked for.
+    delete process.env.NANSEN_DEBUG;
+    setDebugEnabled(undefined);
+
+    const parsed = parseArgs(['--debug', 'auth', 'status']);
+    expect(parsed.flags.debug).toBe(true);
+    expect(parsed.options.debug).toBeUndefined();
+    expect(parsed._).toEqual(['auth', 'status']);
+
+    await runCLI(['--debug', 'auth', 'status'], {
       output: () => {},
       log: () => {},
       errorOutput: () => {},

@@ -149,6 +149,24 @@ describe('redact', () => {
   });
 });
 
+describe('inline credential schemes', () => {
+  it('redacts a Bearer credential inside a longer string', () => {
+    expect(redact('Authorization was Bearer eyJhbGciOiJIUzI1NiJ9.payload.sig')).not.toContain('eyJhbGciOiJIUzI1NiJ9');
+  });
+
+  it('leaves ordinary prose about payments and signatures readable', () => {
+    // These words are not credential introducers; a real payment signature is
+    // caught by header-name and value-shape matching instead.
+    expect(redact('payment outcome unknown')).toBe('payment outcome unknown');
+    expect(redact('signed payment was transmitted')).toBe('signed payment was transmitted');
+    expect(redact('Signature verification failed for header')).toBe('Signature verification failed for header');
+  });
+
+  it('leaves a short word after a scheme keyword alone', () => {
+    expect(redact('Bearer token')).toBe('Bearer token');
+  });
+});
+
 describe('debug switch', () => {
   it('is off by default and prints nothing', () => {
     expect(isDebugEnabled()).toBe(false);

@@ -37,7 +37,12 @@ const SECRET_NAME = /key|token|secret|signature|password|passphrase|mnemonic|see
  * Two copies on purpose: a /g regex carries lastIndex between .test() calls,
  * so the matcher and the replacer must not be the same object.
  */
-const INLINE_SCHEME = /\b(Bearer|Basic|Payment|Signature)\s+[\w.~+/=-]+/i;
+// Only `Bearer`/`Basic` introduce an inline credential in text we trace. `Payment`
+// and `Signature` are ordinary English words here, and header-name matching plus the
+// value-shape rules below already cover a real payment signature — keeping them in
+// this pattern only garbled prose like "payment was transmitted".
+// The value must look like a credential (8+ chars) so "Bearer token" stays readable.
+const INLINE_SCHEME = /\b(Bearer|Basic)\s+[\w.~+/=-]{8,}/i;
 const INLINE_SCHEME_ALL = new RegExp(INLINE_SCHEME.source, 'gi');
 
 /** Request ids and other UUIDs are identifiers, not secrets — keep them readable. */
