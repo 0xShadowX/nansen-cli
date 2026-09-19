@@ -84,14 +84,15 @@ export function validateSession(bundle, now = Date.now()) {
     const claims = JSON.parse(Buffer.from(payload, 'base64url'));
     const publicJwk = createPublicKey(createPrivateKey({ key: bundle.privateJwk, format: 'jwk' })).export({ format: 'jwk' });
     const jkt = createHash('sha256').update(JSON.stringify({ crv: publicJwk.crv, kty: publicJwk.kty, x: publicJwk.x, y: publicJwk.y })).digest('base64url');
-    if (extra || !signature || h.alg !== 'ES256' || publicJwk.crv !== 'P-256' || claims.iss !== bundle.issuer || claims.aud !== bundle.audience || claims.scope !== 'nansen:read' || claims.session_access_revocation_version !== 1 || claims.cnf?.jkt !== jkt || !Number.isFinite(claims.exp) || !Number.isFinite(bundle.expiresAt) || bundle.expiresAt > claims.exp * 1000) throw new Error();
+    if (extra || !signature || h.alg !== 'ES256' || publicJwk.crv !== 'P-256' || claims.iss !== bundle.issuer || claims.aud !== bundle.audience || claims.scope !== 'nansen:read' || claims.cnf?.jkt !== jkt || !Number.isFinite(claims.exp) || !Number.isFinite(bundle.expiresAt) || bundle.expiresAt > claims.exp * 1000) throw new Error();
+    if (claims.session_access_revocation_version !== 1) throw new AuthError('BROWSER_SESSION_SETUP_REQUIRED', 'The session lacks supported revocation coverage. Browser login may not be enabled for this cohort. Ask the operator to verify issuer SESSION_ACCESS_REVOCATION_ENABLED and API BROWSER_SESSION_ACCOUNT_ENABLED before retrying; repeated pairing will not repair server setup.');
     if (bundle.expiresAt <= now) throw new AuthError('SESSION_EXPIRED', 'The saved browser session has expired. Run: nansen login. Automatic renewal is not available in this prerelease.');
   } catch (error) {
     if (error instanceof AuthError) throw error;
     throw new AuthError('INVALID_BROWSER_SESSION', 'The selected browser session is invalid. Run: nansen login.');
   }
 }
-export async function pairDevice(client, { signal, onPending, onIssued, now = Date.now, wait = (ms, signal) => delay(ms, undefined, { signal }) } = {}) {
+export async function pairDevice(client, { signal, onPending, onIssued, onBeforePoll, now = Date.now, wait = (ms, signal) => delay(ms, undefined, { signal }) } = {}) {
   const { response, data } = await client.request('/auth/device/authorize', { audience: client.audience, scope: 'nansen:read', client_label: 'nansen CLI' }, signal);
   if (!response.ok) throw new AuthError('PAIRING_FAILED', 'Could not start browser approval. Retry nansen login later.');
   if (typeof data.device_code !== 'string' || !data.device_code || typeof data.user_code !== 'string' || !/^[A-Za-z0-9-]{4,32}$/.test(data.user_code) || !Number.isFinite(data.expires_in) || data.expires_in <= 0 || data.expires_in > 3600 || !Number.isFinite(data.interval) || data.interval < 1 || data.interval > 600) throw new AuthError('PAIRING_FAILED', 'The pairing service returned an invalid grant. Retry later.');
@@ -107,6 +108,7 @@ export async function pairDevice(client, { signal, onPending, onIssued, now = Da
     await wait(Math.min(interval, deadline - now()), signal);
     if (now() >= deadline) break;
     let result;
+    await onBeforePoll?.();
     try { result = await client.request('/auth/device/token', { device_code: data.device_code }, signal, Math.min(15000, deadline - now())); }
     catch (error) {
       if (error.code !== 'AUTH_NETWORK_ERROR' || ++failures > 2) throw error;
@@ -132,11 +134,11 @@ export async function pairDevice(client, { signal, onPending, onIssued, now = Da
       if (++failures <= 2) { interval = Math.max(interval * 2, Number.isFinite(retryAfter) ? retryAfter : 0); continue; }
       throw transportError();
     }
-    if (tokens.error === 'access_denied') throw new AuthError('PAIRING_DENIED', 'Browser approval was denied. The previous credential is unchanged.');
+    if (tokens.error === 'access_denied') throw Object.assign(new AuthError('PAIRING_DENIED', 'Browser approval was denied. The previous credential is unchanged.'), { provenUnissued: failures === 0 });
     if (tokens.error === 'expired_token') break;
     throw new AuthError('PAIRING_FAILED', 'Browser approval could not be redeemed. Run nansen login again.');
   }
-  throw new AuthError('PAIRING_EXPIRED', 'The approval code expired or was consumed. Run nansen login again.');
+  throw Object.assign(new AuthError('PAIRING_EXPIRED', 'The approval code expired or was consumed. Run nansen login again.'), { provenUnissued: failures === 0 });
 }
 export async function retireSession(bundle, options = {}) {
   try {
@@ -145,6 +147,9 @@ export async function retireSession(bundle, options = {}) {
     const { response, data } = await client.request('/token/revoke', { refresh_token: bundle.refreshToken });
     if (!response.ok || data.refresh_family_revoked !== true) return { remote: 'unconfirmed' };
     if (data.access_revocation?.status === 'recorded' && data.access_revocation.coverage === 'complete_family' && data.access_revocation.propagation === 'pending' && data.access_revocation.version === 1) return { remote: 'recorded_pending' };
+    // Only the pinned recorded/pending and legacy refresh-only receipts are
+    // supported. An invented access_tokens_revoked:true is not proof of
+    // gateway propagation; unknown/future shapes remain unconfirmed.
     if (data.access_tokens_revoked === false) return { remote: 'refresh_only' };
   } catch { /* bounded best effort, never expose transport or proof material */ }
   return { remote: 'unconfirmed' };

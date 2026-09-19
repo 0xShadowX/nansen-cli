@@ -15,7 +15,7 @@ export function trustedIssuer(audience) {
     'https://api.nansen.ai': 'https://idp.nansen.ai',
     'https://api.banansen.dev': 'https://idp.banansen.dev',
   }[audience];
-  if (!issuer) throw new AuthError('AUTH_ORIGIN_UNSUPPORTED', 'Browser sessions require the Nansen production or staging API origin. Check NANSEN_BASE_URL.');
+  if (!issuer) throw new AuthError('AUTH_ORIGIN_UNSUPPORTED', 'Browser sessions require the Nansen production or staging API origin. Check the selected origin in NANSEN_BASE_URL or config.json baseUrl; plain login preserves it.');
   return issuer;
 }
 export function readAuthConfig(env = process.env, devConfigPath = DEV_CONFIG) {

@@ -4,7 +4,7 @@
  */
 
 import crypto from 'crypto';
-import { NansenError, ErrorCode, statusToErrorCode, telemetryHeaders, packageVersion } from '../api.js';
+import { NansenError, ErrorCode, statusToErrorCode, browserSessionError, browserSessionResponseMeta, telemetryHeaders, packageVersion } from '../api.js';
 import { getCostForEndpoint } from '../cost-cache.js';
 import { readResponseMeta } from '../response-meta.js';
 
@@ -303,7 +303,10 @@ EXAMPLES:
             serverDetail = errData.detail || errData.message;
           } catch { /* ignore parse failure */ }
         }
-        if (sessionAuth) { serverDetail = `Agent returned ${response.status}. The selected browser session was not replaced.`; errData = null; }
+        if (sessionAuth) {
+          const safe = browserSessionError(response.status, errData);
+          throw new NansenError(safe.message, safe.code, response.status, browserSessionResponseMeta(response));
+        }
         const meta = readResponseMeta(response);
         throwApiError(
           serverDetail || `Agent returned ${response.status}`,

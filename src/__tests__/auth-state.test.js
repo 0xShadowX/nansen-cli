@@ -91,3 +91,65 @@ describe('secure custody', () => {
   });
 
 });
+
+describe('bounded recovery under journal pressure', () => {
+  it('recovers eight failed preflights through repeated logout and unlock without a ninth empty journal', async () => {
+    const f = fixture(); let unavailable = true;
+    const store = {
+      preflight: async () => { if (unavailable) throw new Error('locked'); },
+      read: f.store.read,
+      remove: async id => { if (unavailable) throw new Error('locked'); return f.store.remove(id); },
+    };
+    const state = createAuthState({ directory: f.directory, store, retire: f.retire });
+    const journals = () => fs.readdirSync(path.join(f.directory, 'auth-operations')).filter(n => n.endsWith('.json'));
+    for (let i = 0; i < 8; i++) await expect(state.begin()).rejects.toThrow('locked');
+    expect(journals()).toHaveLength(8);
+    await expect(state.begin()).rejects.toMatchObject({ code: 'AUTH_CLEANUP_REQUIRED' });
+    for (let i = 0; i < 2; i++) {
+      expect((await state.logout()).cleanup).toContainEqual({ local: 'pending', remote: 'not_attempted' });
+      expect(journals()).toHaveLength(8);
+      expect(JSON.parse(fs.readFileSync(path.join(f.directory, 'config.json'))).auth.active.kind).toBe('none');
+    }
+    unavailable = false;
+    await state.logout(); expect(journals()).toHaveLength(0); expect(f.retire).not.toHaveBeenCalled();
+  });
+  it('drains pre-existing over-limit journals in bounded batches while preserving live attempts', async () => {
+    const f = fixture(); const live = await f.state.begin();
+    for (let i = 0; i < 10; i++) {
+      const id = randomUUID();
+      fs.writeFileSync(path.join(f.directory, 'auth-operations', `${id}.json`), JSON.stringify({ id, generations: [id] }), { mode: 0o600 });
+    }
+    await f.state.logout();
+    expect(fs.existsSync(path.join(f.directory, 'auth-operations', `${live.id}.json`))).toBe(true);
+    await f.state.logout();
+    await expect(f.state.install(live, { bundle: sessionFixture() })).rejects.toMatchObject({ code: 'AUTH_SELECTION_CHANGED' });
+    await f.state.finish(live); await f.state.logout();
+    expect(fs.readdirSync(path.join(f.directory, 'auth-operations')).filter(n => n.endsWith('.json'))).toEqual([]);
+  });
+  it('marks possible issuance durably before polling and never infers unissued from a missing manifest', async () => {
+    const f = fixture(); const a = await f.state.begin(); await f.state.markIssuancePossible(a);
+    expect(JSON.parse(fs.readFileSync(path.join(f.directory, 'auth-operations', `${a.id}.json`))).unissued).toBe(false);
+    expect(await f.state.finish(a)).toContainEqual({ local: 'removed', remote: 'unconfirmed' });
+  });
+});
+it('logout under pressure retires the displaced session without deleting a live pending attempt', async () => {
+  const f = fixture(); const active = await f.state.begin();
+  await f.state.install(active, { bundle: sessionFixture() }); await f.state.finish(active);
+  const pending = await f.state.begin();
+  let unavailable = true;
+  const state = createAuthState({ directory: f.directory, retire: f.retire, store: {
+    preflight: async () => { throw new Error('locked'); },
+    read: async id => { if (unavailable) throw new Error('locked'); return f.store.read(id); },
+    remove: async id => { if (unavailable) throw new Error('locked'); return f.store.remove(id); },
+  } });
+  for (let i = 0; i < 7; i++) await expect(state.begin()).rejects.toThrow('locked');
+  expect((await state.logout()).removed).toBe(true);
+  expect(f.retire).not.toHaveBeenCalled();
+  expect(fs.existsSync(path.join(f.directory, 'auth-operations', `${pending.id}.json`))).toBe(true);
+  unavailable = false;
+  await state.logout(); await state.logout();
+  expect(f.retire).toHaveBeenCalledOnce();
+  await expect(f.state.install(pending, { bundle: sessionFixture() })).rejects.toMatchObject({ code: 'AUTH_SELECTION_CHANGED' });
+  await f.state.finish(pending); await state.logout();
+  expect(f.memory.entries.size).toBe(0);
+});

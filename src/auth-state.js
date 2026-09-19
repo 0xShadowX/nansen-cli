@@ -15,7 +15,7 @@ function safePath(file, directory = false) {
 }
 async function loadLocks() {
   try { return (await import('fs-native-extensions')).default; }
-  catch { throw new AuthError('AUTH_LOCK_UNAVAILABLE', 'Native authentication locking is unavailable. Reinstall nansen-cli with optional dependencies to save or remove authentication. Existing environment API keys still work.'); }
+  catch { throw new AuthError('AUTH_LOCK_UNAVAILABLE', 'Native authentication locking is unavailable. Reinstall nansen-cli with optional dependencies to save or remove authentication. Environment API keys still work. For offline saved-key removal, stop every CLI/auth process, then follow docs/browser-login.md#offline-recovery-without-native-locking. Do not delete auth journals or wallet files.'); }
 }
 export function createAuthState({ directory = authDirectory(), store = createAuthStore(), retire = async () => ({ remote: 'unconfirmed' }), barrier = async () => {}, locks = loadLocks } = {}) {
   const configFile = path.join(directory, 'config.json');
@@ -82,9 +82,11 @@ export function createAuthState({ directory = authDirectory(), store = createAut
     finally { release?.(); finish(); if (queues.get(directory) === tail) queues.delete(directory); }
   }
   const journalPath = id => path.join(journalDir, `${id}.json`);
-  async function cleanupGeneration(generation) {
-    let remote = 'unconfirmed';
-    try { remote = (await retire(await store.read(generation))).remote; } catch { /* missing/partial/locked or offline */ }
+  async function cleanupGeneration(generation, knownRemote) {
+    let remote = knownRemote || 'unconfirmed';
+    if (!knownRemote) {
+      try { remote = (await retire(await store.read(generation))).remote; } catch { /* absence alone never proves no issuance */ }
+    }
     try { await store.remove(generation); return { remote, local: 'removed' }; }
     catch { return { remote, local: 'incomplete' }; }
   }
@@ -93,7 +95,8 @@ export function createAuthState({ directory = authDirectory(), store = createAut
     const pending = [];
     for (const generation of journal.generations) {
       if (config.auth?.active?.generation === generation) continue;
-      const result = await cleanupGeneration(generation);
+      const knownRemote = generation === journal.id ? (journal.unissued === true ? 'not_needed' : journal.candidateRemote) : undefined;
+      const result = await cleanupGeneration(generation, knownRemote);
       outcomes.push(result);
       if (result.local !== 'removed') pending.push(generation);
     }
@@ -114,15 +117,16 @@ export function createAuthState({ directory = authDirectory(), store = createAut
       }
     }
     const files = fs.readdirSync(journalDir).filter(f => /^[a-f0-9-]{36}\.json$/.test(f));
-    if (files.length > 8) throw new AuthError('AUTH_CLEANUP_REQUIRED', 'Too many unfinished authentication operations. Retry nansen logout after unlocking the credential store.');
-    for (const file of files) {
+    // Drain a bounded batch even from pre-existing over-limit directories.
+    // Admission is capped separately; logout must always be able to recover.
+    for (const file of files.slice(0, 8)) {
       const id = file.slice(0, -5);
       const release = await acquire(path.join(journalDir, `${id}.lock`), undefined, false);
       if (!release) continue;
       try {
         safePath(path.join(journalDir, file));
         const journal = JSON.parse(fs.readFileSync(path.join(journalDir, file), 'utf8'));
-        if (journal.id !== id || !Array.isArray(journal.generations) || journal.generations.length > 2 || journal.generations.some(g => !/^[a-f0-9-]{36}$/.test(g))) throw stateError();
+        if (journal.id !== id || !Array.isArray(journal.generations) || journal.generations.length > 2 || journal.generations.some(g => !/^[a-f0-9-]{36}$/.test(g)) || (journal.unissued !== undefined && typeof journal.unissued !== 'boolean') || (journal.candidateRemote !== undefined && !['unconfirmed', 'recorded_pending', 'refresh_only'].includes(journal.candidateRemote))) throw stateError();
         results.push(...await cleanJournal(journal, read()));
       } finally { release(); }
     }
@@ -134,6 +138,7 @@ export function createAuthState({ directory = authDirectory(), store = createAut
       const release = await acquire(lockFile, undefined, false);
       if (release) { release(); fs.unlinkSync(lockFile); }
     }
+    if (fs.readdirSync(journalDir).some(f => f.endsWith('.json'))) results.push({ local: 'pending', remote: 'not_attempted' });
     return results;
   }
   return {
@@ -145,7 +150,7 @@ export function createAuthState({ directory = authDirectory(), store = createAut
         const id = randomUUID();
         const epoch = read().auth?.selectionEpoch ?? null;
         const release = await acquire(path.join(journalDir, `${id}.lock`), signal);
-        const journal = { id, generations: preflight ? [id] : [] };
+        const journal = { id, generations: preflight ? [id] : [], unissued: true };
         const attempt = { id, epoch, release, journal, cleanup };
         try {
           await atomic(journalPath(id), journal);
@@ -158,12 +163,23 @@ export function createAuthState({ directory = authDirectory(), store = createAut
         }
       }, signal);
     },
+    async markIssuancePossible(attempt) {
+      return locked(async () => {
+        if (!attempt.journal.unissued) return;
+        attempt.journal.unissued = false;
+        await atomic(journalPath(attempt.id), attempt.journal);
+      });
+    },
     async install(attempt, { bundle, apiKey, baseUrl }, signal) {
       return locked(async () => {
         const config = read();
         if ((config.auth?.selectionEpoch ?? null) !== attempt.epoch) throw new AuthError('AUTH_SELECTION_CHANGED', 'Another login or logout changed the saved credential. This attempt was not installed.');
         signal?.throwIfAborted();
-        if (bundle) { await store.write(attempt.id, bundle); await barrier('stored'); }
+        if (bundle) {
+          attempt.journal.unissued = false;
+          await atomic(journalPath(attempt.id), attempt.journal);
+          await store.write(attempt.id, bundle); await barrier('stored');
+        }
         const old = config.auth?.active;
         attempt.journal.generations = [...(bundle ? [attempt.id] : []), ...(old?.kind === 'session' ? [old.generation] : [])];
         await atomic(journalPath(attempt.id), attempt.journal);
@@ -194,14 +210,15 @@ export function createAuthState({ directory = authDirectory(), store = createAut
         const config = read();
         const old = config.auth?.active;
         const id = randomUUID();
-        const journal = { id, generations: old?.kind === 'session' ? [old.generation] : [] };
-        await atomic(journalPath(id), journal);
+        if (old?.kind === 'session') await atomic(journalPath(id), { id, generations: [old.generation] });
         const next = { ...config, auth: { version: 1, selectionEpoch: randomUUID(), active: { kind: 'none' } } };
         delete next.apiKey;
         try { await atomic(configFile, next); }
         catch (error) { if (read().auth?.selectionEpoch !== next.auth.selectionEpoch) throw error; }
-        await barrier('logout-committed');
-        return { removed: Boolean(config.apiKey || old?.kind === 'session'), cleanup: await recover() };
+        let cleanup;
+        try { await barrier('logout-committed'); cleanup = await recover(); }
+        catch { cleanup = [{ local: 'incomplete', remote: 'unconfirmed' }]; }
+        return { removed: Boolean(config.apiKey || old?.kind === 'session'), cleanup };
       });
     },
     async readSession(selection) {

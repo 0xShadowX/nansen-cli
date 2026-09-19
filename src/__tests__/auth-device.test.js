@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createPublicKey, verify } from 'node:crypto';
-import { createDeviceClient, pairDevice, retireSession } from '../auth-device.js';
+import { createDeviceClient, pairDevice, retireSession, validateSession } from '../auth-device.js';
 import { issuedFixture, sessionFixture } from './fixtures/auth-fixture.js';
 const response = (status, data, headers = {}) => new Response(JSON.stringify(data), { status, headers });
 function grant() { return { device_code: 'PRIVATE_DEVICE_CODE', user_code: 'ABCD-EFGH', verification_uri: 'https://idp.nansen.ai/device', verification_uri_complete: 'https://idp.nansen.ai/device?user_code=ABCD-EFGH', expires_in: 600, interval: 5 }; }
@@ -76,4 +76,27 @@ describe('device contract', () => {
     await expect(client.verify('candidate-B')).rejects.toMatchObject({ code: 'SESSION_VERIFICATION_FAILED' });
     expect(fetchFn).toHaveBeenCalledTimes(1);
   });
+});
+
+it('treats an unsupported immediate-revocation receipt conservatively', async () => {
+  expect(await retireSession(sessionFixture(), { fetchFn: async () => response(200, { refresh_family_revoked: true, access_tokens_revoked: true }) })).toEqual({ remote: 'unconfirmed' });
+});
+it.each(['access_denied', 'expired_token'])('classifies %s as unissued only without an ambiguous response', async error => {
+  for (const uncertain of [false, true]) {
+    const fetchFn = vi.fn().mockResolvedValueOnce(response(200, grant()));
+    if (uncertain) fetchFn.mockRejectedValueOnce(new Error('lost response'));
+    fetchFn.mockResolvedValue(response(400, { error }));
+    const beforePoll = vi.fn();
+    await expect(pairDevice(createDeviceClient({ audience: 'https://api.nansen.ai', fetchFn }), { wait: async () => {}, onPending: () => {}, onBeforePoll: beforePoll })).rejects.toMatchObject({ provenUnissued: !uncertain });
+    expect(beforePoll).toHaveBeenCalled();
+  }
+});
+
+it('names cohort setup gates without inferring their actual server values', () => {
+  const bundle = sessionFixture(); const parts = bundle.accessToken.split('.');
+  const claims = JSON.parse(Buffer.from(parts[1], 'base64url')); delete claims.session_access_revocation_version;
+  parts[1] = Buffer.from(JSON.stringify(claims)).toString('base64url'); bundle.accessToken = parts.join('.');
+  expect(() => validateSession(bundle)).toThrow('may not be enabled');
+  expect(() => validateSession(bundle)).toThrow('SESSION_ACCESS_REVOCATION_ENABLED');
+  expect(() => validateSession(bundle)).toThrow('BROWSER_SESSION_ACCOUNT_ENABLED');
 });

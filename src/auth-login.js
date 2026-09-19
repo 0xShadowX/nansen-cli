@@ -6,7 +6,8 @@ import { openAuthBrowser } from './auth-browser.js';
 export function defaultAuthState() { return createAuthState({ retire: retireSession }); }
 export function cleanupMessage(results = []) {
   const messages = [];
-  if (results.some(r => r.local === 'incomplete')) messages.push('Saved selection cleared or replaced; secure-store deletion incomplete. Unlock the credential store and run nansen logout to finish cleanup.');
+  if (results.some(r => r.local === 'incomplete')) messages.push('Secure-store deletion incomplete. Unlock the credential store and run nansen logout to finish cleanup.');
+  if (results.some(r => r.local === 'pending')) messages.push('Authentication cleanup remains pending. After other login attempts finish and the credential store is unlocked, rerun nansen logout to process the next bounded batch.');
   if (results.some(r => r.remote === 'unconfirmed')) messages.push('Remote revocation unconfirmed. Review the old CLI device in your Nansen account security settings.');
   if (results.some(r => r.remote === 'recorded_pending')) messages.push('Family revocation recorded; API propagation is pending.');
   if (results.some(r => r.remote === 'refresh_only')) messages.push('Refresh family retired; issued access tokens may remain valid until expiry.');
@@ -24,14 +25,21 @@ export async function browserLogin({ flags = {}, env = process.env, isTTY = proc
   let saved = false;
   let cleanup = [];
   try {
-    const audience = authConfigView(env).baseUrl;
+    const view = authConfigView(env);
+    const audience = view.baseUrl;
     // Origin validation and native preflight both precede any approval request.
-    const client = clientFactory({ audience });
+    let client;
+    try { client = clientFactory({ audience }); }
+    catch (error) {
+      if (error.code === 'AUTH_ORIGIN_UNSUPPORTED') throw new AuthError(error.code, `Browser sessions require the Nansen production or staging API origin. Correct ${view.baseUrlSource === 'env' ? 'NANSEN_BASE_URL' : 'baseUrl in config.json'}; plain login preserves the selected origin.`);
+      throw error;
+    }
     attempt = await state.begin({ signal: controller.signal });
     cleanup.push(...attempt.cleanup);
     const bundle = await pair(client, {
       signal: controller.signal,
-      onIssued: value => { candidate = value; },
+      onBeforePoll: () => state.markIssuancePossible(attempt),
+      onIssued: value => { candidate = value; attempt.journal.unissued = false; },
       onPending: async pending => {
         emit('pending', pending);
         progress(`Approve nansen CLI in your browser: ${pending.verification_uri}\nCode: ${pending.user_code}`);
@@ -50,7 +58,10 @@ export async function browserLogin({ flags = {}, env = process.env, isTTY = proc
   } catch (error) {
     // A pointer commit is authoritative even if acknowledgement/cleanup failed.
     saved ||= attempt?.committed === true;
-    if (!saved && !attempt?.uncertain && candidate) cleanup.push({ ...await retireSession(candidate), local: 'removed' });
+    if (!saved && !attempt?.uncertain && candidate) {
+      const result = await retireSession(candidate);
+      attempt.journal.candidateRemote = result.remote;
+    } else if (attempt && error.provenUnissued === true) attempt.journal.unissued = true;
     if (attempt) {
       try { cleanup.push(...await state.finish(attempt)); } catch { cleanup.push({ local: 'incomplete', remote: 'unconfirmed' }); }
       attempt = null;

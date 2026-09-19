@@ -258,9 +258,9 @@ export function runDoctorChecks(deps = {}) {
   // Report the URL the CLI will actually use — a config file can set a
   // non-default base URL too, not just the env var
   if (auth.baseUrlSource === 'env') {
-    checks.push(check('base-url', 'warn', `NANSEN_BASE_URL override active: ${auth.baseUrl}`, `Unset NANSEN_BASE_URL to use ${DEFAULT_BASE_URL}`));
+    checks.push(check('base-url', 'warn', `NANSEN_BASE_URL override active: ${auth.baseUrl}`, `Unset NANSEN_BASE_URL to use the saved baseUrl, or ${DEFAULT_BASE_URL} when none is saved`));
   } else if (auth.baseUrl !== DEFAULT_BASE_URL) {
-    checks.push(check('base-url', 'warn', `Non-default API base URL in ${auth.configPath}: ${auth.baseUrl}`, 'Run: nansen login (re-saves the default)'));
+    checks.push(check('base-url', 'warn', `Non-default API base URL in ${auth.configPath}: ${auth.baseUrl}`, 'Correct baseUrl in config.json or set NANSEN_BASE_URL=https://api.nansen.ai for this invocation. Plain login preserves the selected origin.'));
   } else {
     checks.push(check('base-url', 'ok', `API base URL: ${auth.baseUrl}`));
   }

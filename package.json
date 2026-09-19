@@ -13,7 +13,8 @@
     "!src/__tests__/**",
     "skills/**",
     "scripts/postinstall.js",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "docs/browser-login.md"
   ],
   "scripts": {
     "postinstall": "node scripts/postinstall.js",

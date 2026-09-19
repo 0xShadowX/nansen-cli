@@ -85,3 +85,24 @@ describe('real process custody and fault injection', () => {
     expect(read(dir).auth.active.kind).toBe('none');
   });
 });
+
+it('fresh children recover eight failed preflights after locked logout and process death', async () => {
+  const dir = directory(); const a = await worker(dir);
+  await a.call('store-locked', { value: true });
+  for (let i = 0; i < 8; i++) expect((await a.call('begin')).error).toBeDefined();
+  expect((await a.call('logout')).error).toBeUndefined();
+  expect(read(dir).auth.active.kind).toBe('none');
+  expect(fs.readdirSync(path.join(dir, 'auth-operations')).filter(n => n.endsWith('.json'))).toHaveLength(8);
+  await kill(a.child);
+  const b = await worker(dir); expect((await b.call('logout')).error).toBeUndefined();
+  expect(fs.readdirSync(path.join(dir, 'auth-operations')).filter(n => n.endsWith('.json'))).toEqual([]);
+  expect(fs.readdirSync(path.join(dir, 'synthetic-store'))).toEqual([]);
+});
+it.each(['before-rename', 'after-rename'])('SIGKILL at poll-marker %s preserves honest issuance classification', async phase => {
+  const dir = directory(); const a = await worker(dir); const begun = await a.call('begin');
+  void a.call('poll-marker', { target: { phase, file: `${begun.result.id}.json` } });
+  await a.barrier(); await kill(a.child);
+  const b = await worker(dir); const result = await b.call('logout');
+  expect(result.error).toBeUndefined();
+  expect(result.result.cleanup).toContainEqual({ local: 'removed', remote: phase === 'before-rename' ? 'not_needed' : 'unconfirmed' });
+});

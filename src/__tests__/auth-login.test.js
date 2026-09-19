@@ -149,3 +149,62 @@ describe('selected credential and payment boundary', () => {
     expect(fetch.mock.calls[0][1].headers.apikey).toBeUndefined();
   });
 });
+
+describe('public CLI session error compatibility', () => {
+  it.each([
+    [401, 'unauthorized', 'UNAUTHORIZED'],
+    [403, 'insufficient_credits', 'CREDITS_EXHAUSTED'],
+    [403, 'plan_upgrade_required', 'plan_upgrade_required'],
+  ])('keeps key/session code parity for %s %s without reflecting session secrets', async (status, code, expected) => {
+    const f = fixture(); const bundle = sessionFixture(); const a = await f.state.begin();
+    await f.state.install(a, { bundle, baseUrl: bundle.audience }); await f.state.finish(a);
+    vi.stubEnv('HOME', f.home); vi.stubEnv('DO_NOT_TRACK', '1');
+    for (const [session, args] of [false, true].flatMap(session => [
+      [session, ['research', 'profiler', 'labels', '--address', '0x0000000000000000000000000000000000000001', '--chain', 'ethereum']],
+      [session, ['agent', 'synthetic question', '--json']],
+    ])) {
+      const fetch = vi.fn().mockImplementation(async () => new Response(JSON.stringify({ code, message: bundle.accessToken, detail: { code, message: bundle.privateJwk.d }, secret: bundle.refreshToken }), { status, headers: { 'content-type': 'application/json', 'x-request-id': bundle.accessToken, 'x-nansen-plan-notice': bundle.refreshToken, 'x-nansen-credits-remaining': '0' } }));
+      vi.stubGlobal('fetch', fetch);
+      const output = vi.fn(); const errorOutput = vi.fn(); let instance;
+      class API extends NansenAPI {
+        constructor() {
+          super(undefined, bundle.audience, { credential: session ? resolveCredential({ env: f.env }) : { kind: 'api-key', apiKey: 'same-account-key' }, authState: f.state, retry: { maxRetries: 0 } }); instance = this;
+        }
+      }
+      await runCLI(args, { NansenAPIClass: API, output, errorOutput, exit: vi.fn() });
+      const envelope = JSON.parse(output.mock.calls.at(-1)[0]);
+      expect(envelope.code).toBe(expected);
+      if (session) {
+        const printed = JSON.stringify([output.mock.calls, errorOutput.mock.calls, instance.lastResponseMeta]);
+        for (const secret of [bundle.accessToken, bundle.refreshToken, bundle.privateJwk.d]) expect(printed).not.toContain(secret);
+        if (status === 401) expect(envelope.error).toContain('selected browser session');
+        expect(envelope.details.credits.remaining).toBe(0);
+      }
+    }
+  });
+  it.each(['__proto__', 'constructor', 'PRIVATE_SERVER_CODE'])('does not reflect arbitrary session code %s', async code => {
+    const f = fixture(); const bundle = sessionFixture(); const a = await f.state.begin();
+    await f.state.install(a, { bundle, baseUrl: bundle.audience }); await f.state.finish(a);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ code, message: bundle.accessToken }), { status: 403 })));
+    const api = new NansenAPI(undefined, bundle.audience, { credential: resolveCredential({ env: f.env }), authState: f.state, retry: { maxRetries: 0 } });
+    const error = await api.getAccount().catch(e => e);
+    expect(error.code).toBe('FORBIDDEN'); expect(error.message).not.toContain(bundle.accessToken);
+  });
+  it.each([true, false])('reports remote uncertainty only when issuance was possible (%s)', async provenUnissued => {
+    const f = fixture(); const log = vi.fn(); const errorOutput = vi.fn();
+    const pair = async (_client, { onBeforePoll }) => {
+      await onBeforePoll();
+      throw Object.assign(new AuthError('PAIRING_EXPIRED', 'Expired.'), { provenUnissued });
+    };
+    await expect(browserLogin({ env: f.env, state: f.state, pair, log, errorOutput, isTTY: false, signals: new EventEmitter() })).rejects.toThrow('Expired');
+    expect(JSON.stringify(errorOutput.mock.calls).includes('Remote revocation unconfirmed')).toBe(!provenUnissued);
+  });
+});
+it.each(['env', 'config'])('identifies the actual unsupported origin source: %s', async source => {
+  const f = fixture();
+  if (source === 'env') f.env.NANSEN_BASE_URL = 'https://example.invalid';
+  else fs.writeFileSync(f.file, JSON.stringify({ baseUrl: 'https://example.invalid' }));
+  const pair = vi.fn();
+  await expect(browserLogin({ env: f.env, state: f.state, pair, isTTY: true, log: vi.fn(), signals: new EventEmitter() })).rejects.toThrow(source === 'env' ? 'Correct NANSEN_BASE_URL' : 'Correct baseUrl in config.json');
+  expect(pair).not.toHaveBeenCalled();
+});

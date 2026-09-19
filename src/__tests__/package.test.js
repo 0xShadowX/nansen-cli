@@ -53,6 +53,7 @@ describe('Package Integrity', () => {
 
     expect(result).toContain('nansen');
     expect(result).toContain('COMMANDS');
+    expect(existsSync(join(tmpDir, 'node_modules/nansen-cli/docs/browser-login.md'))).toBe(true);
     // Native auth modules must stay lazy when optional bindings are omitted.
     const apiModule = join(tmpDir, 'node_modules/nansen-cli/src/api.js');
     const stateModule = join(tmpDir, 'node_modules/nansen-cli/src/auth-state.js');
@@ -66,7 +67,7 @@ describe('Package Integrity', () => {
       await new NansenAPI('synthetic-key').getAccount();
       const { createAuthState } = await import(pathToFileURL(${JSON.stringify(stateModule)}));
       try { await createAuthState({directory:${JSON.stringify(join(tmpDir, 'auth'))}}).begin(); throw new Error('unexpected native availability'); }
-      catch (error) { if(error.code !== 'AUTH_LOCK_UNAVAILABLE') throw error; }
+      catch (error) { if(error.code !== 'AUTH_LOCK_UNAVAILABLE' || !error.message.includes('offline-recovery-without-native-locking')) throw error; }
       console.log('key-auth-without-native-ok');
     `], { cwd: tmpDir, encoding: 'utf8' });
     expect(smoke).toContain('key-auth-without-native-ok');
