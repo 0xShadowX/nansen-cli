@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createPublicKey, createPrivateKey, verify } from 'node:crypto';
+import { createPublicKey, createPrivateKey, verify, randomUUID } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createAuthState, renewalStatus } from '../auth-state.js';
 import { createAuthStore } from '../auth-store.js';
@@ -196,7 +196,7 @@ it.each(['scope', 'subject', 'key', 'audience', 'coverage', 'lifetime', 'size', 
   parts[1] = Buffer.from(JSON.stringify(claims)).toString('base64url'); next = { ...next, accessToken: parts.join('.') };
   f.fetchFn.mockResolvedValue(response(200, { access_token: next.accessToken, refresh_token: kind === 'repeat' ? f.old.refreshToken : kind === 'size' ? 's'.repeat(4097) : 'next', token_type: 'Bearer', expires_in: 3600 }));
   const error = await f.acquire().catch(e => e);
-  expect(error.code).toBe('SESSION_RENEWAL_UNCERTAIN'); expect(JSON.stringify(error)).not.toContain(next.accessToken);
+  expect(error.code).toBe(kind === 'coverage' ? 'BROWSER_SESSION_SETUP_REQUIRED' : 'SESSION_RENEWAL_UNCERTAIN'); expect(JSON.stringify(error)).not.toContain(next.accessToken);
   expect(json(f.file).auth.active.generation).toBe(f.selection.generation); expect(f.retire).not.toHaveBeenCalled();
 });
 it('the full store budget stops a chunk sequence and a later command cannot reuse its consumed source', async () => {
@@ -251,21 +251,69 @@ it('foreign JSON cannot consume renewal admission and remains reported by cleanu
   expect(fs.readdirSync(dir).filter(n => n.startsWith('foreign-'))).toHaveLength(10);
 });
 
-it.each(['null', '{"PRIVATE-CORRUPTION', 'x'.repeat(4097)])('corrupt rotation metadata retains target authority until valid restoration (%#)', async contents => {
+it.each(['null', '{"PRIVATE-CORRUPTION', 'x'.repeat(4097), 'broken-symlink'])('corrupt rotation metadata retains target authority until valid restoration (%#)', async contents => {
   const f = await fixture({ barrier: async phase => { if (phase === 'rotation-stored') throw new Error('crash'); } });
   await expect(f.acquire()).rejects.toThrow('crash');
+  const independent = randomUUID(); const other = sessionFixture({ accountId: 'unrelated' }); await f.store.write(independent, other);
   const valid = fs.readFileSync(f.journal(), 'utf8'); const before = [...f.memory.entries.keys()];
-  fs.writeFileSync(f.journal(), contents);
+  if (contents === 'broken-symlink') { fs.unlinkSync(f.journal()); fs.symlinkSync(path.join(f.directory, 'absent-journal'), f.journal()); }
+  else fs.writeFileSync(f.journal(), contents);
   const error = await f.acquire().catch(e => e);
   expect(error).toMatchObject({ code: 'AUTH_JOURNAL_INVALID' });
   expect(error.message).toContain('auth-operations'); expect(error.message).not.toContain('PRIVATE-CORRUPTION');
   await expect(f.state.begin()).rejects.toMatchObject({ code: 'AUTH_JOURNAL_INVALID' });
-  await expect(f.state.logout()).rejects.toMatchObject({ code: 'AUTH_JOURNAL_INVALID' });
-  expect(fs.readFileSync(f.journal(), 'utf8')).toBe(contents);
+  expect((await f.state.logout()).cleanup).toContainEqual({ local: 'incomplete', remote: 'unconfirmed', code: 'AUTH_JOURNAL_INVALID' });
+  expect(json(f.file).auth.active.kind).toBe('none');
+  await expect(f.acquire()).rejects.toMatchObject({ code: 'AUTH_SELECTION_CHANGED' });
+  if (contents === 'broken-symlink') expect(fs.lstatSync(f.journal()).isSymbolicLink()).toBe(true);
+  else expect(fs.readFileSync(f.journal(), 'utf8')).toBe(contents);
   expect([...f.memory.entries.keys()]).toEqual(before); expect(f.retire).not.toHaveBeenCalled();
   expect(f.fetchFn).toHaveBeenCalledOnce();
+  if (contents === 'broken-symlink') fs.unlinkSync(f.journal());
   fs.writeFileSync(f.journal(), valid);
-  expect((await f.acquire()).generation).toBe(JSON.parse(valid).targetGeneration);
   expect(f.fetchFn).toHaveBeenCalledOnce(); expect(f.retire).not.toHaveBeenCalled();
-  await f.state.logout(); expect(f.retire).toHaveBeenCalledOnce(); expect(f.memory.entries.size).toBe(0);
+  await f.state.logout(); expect(f.retire).toHaveBeenCalledOnce();
+  expect((await f.store.read(independent)).refreshToken).toBe(other.refreshToken);
+  expect([...f.memory.entries.keys()].every(k => k.startsWith(independent))).toBe(true);
+});
+
+
+it.each(['epoch', 'generation', 'account'])('rejects malformed v1 %s before upgrade, journal or dispatch', async field => {
+  const f = await fixture(); const config = json(f.file);
+  if (field === 'epoch') delete config.auth.selectionEpoch;
+  if (field === 'generation') config.auth.active.generation = 'invalid';
+  if (field === 'account') config.auth.active.accountId = 'x'.repeat(256);
+  fs.writeFileSync(f.file, JSON.stringify(config)); const before = fs.readFileSync(f.file, 'utf8');
+  const selection = resolveCredential({ env: { HOME: f.home } });
+  await expect(f.acquire(selection)).rejects.toMatchObject({ code: 'AUTH_STATE_INVALID' });
+  expect(fs.readFileSync(f.file, 'utf8')).toBe(before); expect(f.fetchFn).not.toHaveBeenCalled();
+  expect(fs.readdirSync(path.dirname(f.journal())).filter(n => n.endsWith('.json'))).toEqual([]);
+});
+it.each([2, 60, 61])('bounded issuer clock skew of %s seconds', async skew => {
+  const f = await fixture(); const next = issuedFixture(f.old.privateJwk, { now: f.now() + skew * 1000 });
+  f.fetchFn.mockResolvedValue(response(200, { access_token: next.accessToken, refresh_token: 'next', token_type: 'Bearer', expires_in: 3600 }));
+  if (skew <= 60) expect((await f.acquire()).refreshToken).toBe('next');
+  else {
+    for (let i = 0; i < 2; i++) await expect(f.acquire()).rejects.toMatchObject({ code: 'SESSION_CLOCK_SKEW' });
+    expect(json(f.journal())).toMatchObject({ phase: 'blocked', reason: 'clock' });
+    expect(f.fetchFn).toHaveBeenCalledOnce();
+  }
+});
+it.each(['setup', 'expired', 'protocol'])('retains fixed %s guidance across fresh owners without replay', async kind => {
+  const f = await fixture(); let next = issuedFixture(f.old.privateJwk, { now: kind === 'expired' ? f.now() - 3600000 : f.now() });
+  if (kind === 'setup') {
+    const parts = next.accessToken.split('.'); const c = JSON.parse(Buffer.from(parts[1], 'base64url')); delete c.session_access_revocation_version;
+    parts[1] = Buffer.from(JSON.stringify(c)).toString('base64url'); next.accessToken = parts.join('.');
+  }
+  f.fetchFn.mockResolvedValue(kind === 'protocol' ? response(400, { error: 'invalid_request' }) : response(200, { access_token: next.accessToken, refresh_token: 'next', token_type: 'Bearer', expires_in: 3600 }));
+  const code = { setup: 'BROWSER_SESSION_SETUP_REQUIRED', expired: 'SESSION_EXPIRED', protocol: 'SESSION_REFRESH_PROTOCOL_ERROR' }[kind];
+  await expect(f.acquire()).rejects.toMatchObject({ code });
+  const restarted = createAuthState({ directory: f.directory, store: f.store, now: f.now, refresh: f.fetchFn, retire: f.retire });
+  await expect(restarted.acquireSession(f.selection, { audience: f.old.audience })).rejects.toMatchObject({ code });
+  expect(json(f.journal())).toMatchObject({ phase: 'blocked', reason: kind }); expect(f.fetchFn).toHaveBeenCalledOnce();
+});
+it.each(['ECONNREFUSED', 'ENOTFOUND', 'ECONNRESET', 'UND_ERR_CONNECT_TIMEOUT', 'ETIMEDOUT'])('an arbitrary injected %s cause cannot establish safe dispatch topology', async code => {
+  const f = await fixture(); f.fetchFn.mockRejectedValue(Object.assign(new TypeError('fetch failed'), { cause: Object.assign(new Error('private hostname'), { code, syscall: 'connect', errno: -61, address: '127.0.0.1', port: 443 }) }));
+  await expect(f.acquire()).rejects.toMatchObject({ code: 'SESSION_RENEWAL_UNCERTAIN' });
+  await expect(f.acquire()).rejects.toMatchObject({ code: 'SESSION_RENEWAL_UNCERTAIN' }); expect(f.fetchFn).toHaveBeenCalledOnce();
 });

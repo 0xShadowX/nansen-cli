@@ -1,5 +1,8 @@
 import { generateKeyPairSync, createPrivateKey, createPublicKey, createHash, randomUUID, sign } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { channel } from 'node:diagnostics_channel';
+import { isIP } from 'node:net';
 import { AuthError, trustedIssuer } from './auth-credentials.js';
 
 const encode = value => Buffer.from(JSON.stringify(value)).toString('base64url');
@@ -13,6 +16,33 @@ export function deviceProof(privateJwk, url, nonce, now = Date.now()) {
   return `${input}.${sign('sha256', Buffer.from(input), { key, dsaEncoding: 'ieee-p1363' }).toString('base64url')}`;
 }
 const transportError = () => new AuthError('AUTH_NETWORK_ERROR', 'Authentication service unavailable or timed out. Retry later. If token issuance completed but its response was lost, run nansen login again; remote cleanup may be unconfirmed.');
+// Only native Undici lifecycle evidence for this exact invocation can establish
+// a pre-connection failure. Proxy CONNECTs, retries, wrappers without evidence,
+// response-body errors and arbitrary injected cause codes remain ambiguous.
+const dispatchScope = new AsyncLocalStorage();
+const connectionFailures = new WeakSet();
+async function fetchWithDispatchEvidence(fetchFn, url, options) {
+  const scope = {}; const requests = new Map();
+  const created = ({ request }) => { if (dispatchScope.getStore() === scope) requests.set(request, { sent: false }); };
+  const sent = ({ request }) => { if (requests.has(request)) requests.get(request).sent = true; };
+  const failed = ({ request, error }) => { if (requests.has(request)) requests.get(request).error = error; };
+  const listeners = [['undici:request:create', created], ['undici:client:sendHeaders', sent], ['undici:request:error', failed]];
+  for (const [name, listener] of listeners) channel(name).subscribe(listener);
+  try { return await dispatchScope.run(scope, () => fetchFn(url, options)); }
+  catch (error) {
+    const target = new URL(url); const [entry] = requests;
+    const [request, outcome] = entry || [];
+    const cause = error?.cause;
+    const direct = requests.size === 1 && request.origin === target.origin && request.path === target.pathname && request.method === 'POST' && !outcome.sent && outcome.error === cause;
+    const lookup = ['ENOTFOUND', 'EAI_AGAIN'].includes(cause?.code) && cause.syscall === 'getaddrinfo' && cause.hostname === target.hostname;
+    const refused = cause?.code === 'ECONNREFUSED' && cause.syscall === 'connect' && isIP(cause.address || '') && cause.port === Number(target.port || (target.protocol === 'https:' ? 443 : 80));
+    if (direct && error instanceof TypeError && error.message === 'fetch failed' && cause instanceof Error && Number.isInteger(cause.errno) && (lookup || refused)) {
+      const failure = new AuthError('AUTH_CONNECT_UNAVAILABLE', 'Could not establish a connection to the authentication service. Check connectivity and retry later.');
+      connectionFailures.add(failure); throw failure;
+    }
+    throw error;
+  } finally { for (const [name, listener] of listeners) channel(name).unsubscribe(listener); }
+}
 async function readResponse(response) {
   // Read incrementally: never buffer an unbounded credential-bearing response.
   if (!response.body?.getReader) return response.json(); // injected test transports
@@ -44,14 +74,15 @@ export function createDeviceClient({ audience, privateJwk = createDeviceKey(), f
       const timer = setTimeout(abort, Math.max(1, deadline - performance.now()));
       try {
         const url = issuer + route;
-        const response = await fetchFn(url, { method: 'POST', redirect: 'error', signal: controller.signal, headers: { 'Content-Type': 'application/json', DPoP: deviceProof(privateJwk, url, nonce, now()) }, body: JSON.stringify(body) });
+        const response = await fetchWithDispatchEvidence(fetchFn, url, { method: 'POST', redirect: 'error', signal: controller.signal, headers: { 'Content-Type': 'application/json', DPoP: deviceProof(privateJwk, url, nonce, now()) }, body: JSON.stringify(body) });
         const data = await readResponse(response);
         const nextNonce = response.headers.get('dpop-nonce');
         if (nextNonce && nextNonce.length <= 1024) nonce = nextNonce;
         if (response.status === 401 && data?.error === 'use_dpop_nonce' && nextNonce && nextNonce.length <= 1024 && attempt === 0) continue;
         return { response, data };
-      } catch {
+      } catch (error) {
         signal?.throwIfAborted();
+        if (connectionFailures.has(error)) throw error;
         throw transportError();
       } finally { clearTimeout(timer); signal?.removeEventListener('abort', abort); }
     }
@@ -88,8 +119,9 @@ export function validateSession(bundle, now = Date.now(), { allowExpired = false
     const jkt = createHash('sha256').update(JSON.stringify({ crv: publicJwk.crv, kty: publicJwk.kty, x: publicJwk.x, y: publicJwk.y })).digest('base64url');
     if (extra || !signature || h.alg !== 'ES256' || publicJwk.crv !== 'P-256' || claims.iss !== bundle.issuer || claims.aud !== bundle.audience || claims.scope !== 'nansen:read' || claims.cnf?.jkt !== jkt || !Number.isFinite(claims.exp) || !Number.isFinite(bundle.expiresAt) || bundle.expiresAt > claims.exp * 1000) throw new Error();
     if (claims.session_access_revocation_version !== 1) throw new AuthError('BROWSER_SESSION_SETUP_REQUIRED', 'The session lacks supported revocation coverage. Browser login may not be enabled for this cohort. Ask the operator to verify issuer SESSION_ACCESS_REVOCATION_ENABLED and API BROWSER_SESSION_ACCOUNT_ENABLED before retrying; repeated pairing will not repair server setup.');
-    if (!Number.isFinite(claims.iat) || !Number.isFinite(claims.nbf) || claims.exp <= claims.iat || claims.exp - claims.iat > 3600 || claims.nbf > now / 1000 || typeof claims.sub !== 'string' || !claims.sub || (bundle.accountId !== undefined && claims.sub !== bundle.accountId)) throw new Error();
-    if (!allowExpired && bundle.expiresAt <= now) throw new AuthError('SESSION_EXPIRED', 'The saved browser access token has expired. Retry the command to renew it.');
+    if (!Number.isFinite(claims.iat) || !Number.isFinite(claims.nbf) || claims.exp <= claims.iat || claims.exp - claims.iat > 3600  || typeof claims.sub !== 'string' || !claims.sub || (bundle.accountId !== undefined && claims.sub !== bundle.accountId)) throw new Error();
+    if (claims.nbf > now / 1000 + 60) throw new AuthError('SESSION_CLOCK_SKEW', 'Session time is ahead of the local clock. Synchronize system time and check issuer clock configuration before retrying login.');
+    if (!allowExpired && bundle.expiresAt <= now) throw new AuthError('SESSION_EXPIRED', 'The browser access token has expired. Check system time and issuer lifetime configuration; run nansen login if renewal cannot recover.');
   } catch (error) {
     if (error instanceof AuthError) throw error;
     throw new AuthError('INVALID_BROWSER_SESSION', 'The selected browser session is invalid. Run: nansen login.');
@@ -118,7 +150,7 @@ export async function pairDevice(client, { signal, onPending, onIssued, onBefore
       pollInFlight = true;
       try { result = await client.request('/auth/device/token', { device_code: data.device_code }, signal, Math.min(15000, deadline - now())); }
       catch (error) {
-        if (error.code !== 'AUTH_NETWORK_ERROR' || ++failures > 2) throw error;
+        if (!['AUTH_NETWORK_ERROR', 'AUTH_CONNECT_UNAVAILABLE'].includes(error.code) || ++failures > 2) throw error;
         interval = Math.min(interval * 2, 60000); continue;
       }
       const { response: poll, data: tokens } = result;
@@ -176,13 +208,16 @@ export async function refreshSession(bundle, { signal, now = Date.now, fetchFn =
   const client = createDeviceClient({ audience: bundle.audience, privateJwk: bundle.privateJwk, now, fetchFn });
   let result;
   try { result = await client.request('/token/refresh', { refresh_token: bundle.refreshToken, audience: bundle.audience }, signal, 20000); }
-  catch { throw uncertain(); }
+  catch (error) {
+    if (connectionFailures.has(error)) throw Object.assign(new AuthError('SESSION_REFRESH_RETRYABLE', error.message), { retryNotBefore: now() + 1000 });
+    throw uncertain();
+  }
   const { response, data } = result;
   if (!response.ok) {
     if (response.status === 401 && data?.error === 'invalid_refresh_token') throw new AuthError('SESSION_REFRESH_REJECTED', 'The saved session cannot be renewed. Run: nansen login.');
+    if (response.status === 400 && data?.error === 'invalid_request') throw new AuthError('SESSION_REFRESH_PROTOCOL_ERROR', 'The issuer rejected the refresh request format. Check CLI/issuer compatibility with the operator before running nansen login.');
     if ((response.status === 429 && data?.error === 'rate_limited') ||
-        (response.status === 401 && ['use_dpop_nonce', 'use_dpop_proof', 'invalid_dpop_proof'].includes(data?.error)) ||
-        (response.status === 400 && data?.error === 'invalid_request')) {
+        (response.status === 401 && ['use_dpop_nonce', 'use_dpop_proof', 'invalid_dpop_proof'].includes(data?.error))) {
       const seconds = Number(response.headers.get('retry-after'));
       throw Object.assign(new AuthError('SESSION_REFRESH_RETRYABLE', 'Session renewal was refused before rotation. Check connectivity and system time, then retry later.'), {
         retryNotBefore: now() + (Number.isFinite(seconds) && seconds > 0 ? Math.min(seconds, 86400) * 1000 : 1000),
@@ -196,5 +231,8 @@ export async function refreshSession(bundle, { signal, now = Date.now, fetchFn =
     const replacement = { ...bundle, accessToken: data.access_token, refreshToken: data.refresh_token, expiresAt: Math.min(started + data.expires_in * 1000, exp) };
     validateSession(replacement, now());
     return replacement;
-  } catch { throw uncertain(); }
+  } catch (error) {
+    if (error instanceof AuthError && ['BROWSER_SESSION_SETUP_REQUIRED', 'SESSION_CLOCK_SKEW', 'SESSION_EXPIRED'].includes(error.code)) throw error;
+    throw uncertain();
+  }
 }

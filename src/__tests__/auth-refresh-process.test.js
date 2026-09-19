@@ -101,3 +101,33 @@ it('SIGKILL after logout tombstone preserves detached rotation retirement author
   const b = await s.worker(); expect((await b.call('logout')).error).toBeUndefined();
   expect(s.revokes).toEqual([s.old.refreshToken]); expect(fs.readdirSync(path.join(s.root, 'synthetic-store'))).toEqual([]);
 });
+
+it('real Node/Undici lookup refusal remains retryable in a fresh healthy process', async () => {
+  const s = server(), a = await s.worker(); await a.call('seed', { bundle: s.old }); await a.call('select');
+  await a.call('dns-failure');
+  expect((await a.call('account')).error?.code).toBe('SESSION_REFRESH_RETRYABLE');
+  const config = JSON.parse(fs.readFileSync(path.join(s.root, 'config.json')));
+  const journal = path.join(s.root, 'auth-operations', `${config.auth.selectionEpoch}.json`);
+  expect(JSON.parse(fs.readFileSync(journal)).phase).toBe('retryable'); expect(s.consumed.size).toBe(0);
+  await kill(a.child);
+  const b = await s.worker(); await b.call('select');
+  expect((await b.call('account')).error).toBeUndefined(); expect(s.consumed.size).toBe(0); // unexpired access during cooldown
+  await b.call('time', { now: s.now + 2000 });
+  expect((await b.call('account')).error).toBeUndefined(); expect(s.consumed.get(s.old.refreshToken)).toBe(1);
+});
+it('fresh-child logout under hidden-target corruption deselects and retains authority until restoration', async () => {
+  const s = server(), a = await s.worker(); await a.call('seed', { bundle: s.old }); await a.call('select');
+  void a.call('account', { target: { phase: 'rotation-stored' } }); await a.barrier(); await kill(a.child);
+  const configFile = path.join(s.root, 'config.json'); const config = JSON.parse(fs.readFileSync(configFile));
+  const journal = path.join(s.root, 'auth-operations', `${config.auth.selectionEpoch}.json`);
+  const valid = fs.readFileSync(journal); fs.writeFileSync(journal, '{damaged');
+  const entries = fs.readdirSync(path.join(s.root, 'synthetic-store'));
+  const b = await s.worker(); await b.call('select');
+  expect((await b.call('logout')).result.cleanup).toContainEqual({ local: 'incomplete', remote: 'unconfirmed', code: 'AUTH_JOURNAL_INVALID' });
+  expect(JSON.parse(fs.readFileSync(configFile)).auth.active.kind).toBe('none');
+  expect((await b.call('account')).error.code).toBe('AUTH_SELECTION_CHANGED');
+  expect(fs.readdirSync(path.join(s.root, 'synthetic-store'))).toEqual(entries); expect(s.revokes).toEqual([]);
+  fs.writeFileSync(journal, valid); await kill(b.child);
+  const c = await s.worker(); expect((await c.call('logout')).error).toBeUndefined();
+  expect(s.revokes).toEqual(['child-1']); expect(fs.readdirSync(path.join(s.root, 'synthetic-store'))).toEqual([]);
+});
