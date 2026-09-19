@@ -174,7 +174,6 @@ describe('generateSubcommandHelp', () => {
     afterEach(() => {
       process.env.HOME = originalHome;
       fs.rmSync(tempDir, { recursive: true, force: true });
-      vi.resetModules();
     });
 
     const seedCosts = costs => {
@@ -207,9 +206,13 @@ describe('generateSubcommandHelp', () => {
       expect(help).toContain('Params (* required): --chain (solana), --token*');
     });
 
-    // Drives the real `--help` path. A fresh update-check cache keeps the
-    // background notifier from spawning, and fetch is stubbed so any stray
-    // request fails loudly instead of reaching the network.
+    // Drives the real `--help` path. Staying offline is the seeded caches'
+    // job: a fresh update-check cache stops the background notifier spawning,
+    // and the cost map each caller seeds first stops the inline spec fetch the
+    // help path awaits on a cold cache. The fetch stub is belt and braces,
+    // installed before the dynamic import so a stray request — at import time
+    // or call time — is recorded and fails the assertion below rather than
+    // escaping to the network.
     const runHelp = async argv => {
       fs.mkdirSync(path.join(tempDir, '.nansen'), { recursive: true });
       fs.writeFileSync(
