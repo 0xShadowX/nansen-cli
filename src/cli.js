@@ -175,7 +175,7 @@ export const VALUELESS_FLAGS = new Set([
   'enrich', 'full', 'human', 'enabled', 'disabled', 'expert', 'json', 'offline',
   'no-simulate', 'no-verify-outcome', 'no-revoke-excessive-allowance', 'dry-run',
   'send-api-key', 'all', 'max', 'gasless', 'auto-slippage', 'unsafe-no-password',
-  'reveal',
+  'reveal', 'yes',
 ]);
 
 export function parseArgs(args) {
@@ -982,7 +982,7 @@ SUBCOMMANDS:
 USAGE:
   nansen trade quote --chain <chain> --from <token> --to <token> --amount <units> [--wallet <name>]
   nansen trade quote --chain <chain> --to-chain <chain> --from <token> --to <token> --amount <units>
-  nansen trade execute --quote <quoteId> [--wallet <name>]
+  nansen trade execute --quote <quoteId> [--wallet <name>] [--dry-run] [--yes]
   nansen trade bridge-status --tx-hash <hash> --from-chain <chain> --to-chain <chain>
   nansen trade limit-order <create|list|cancel|update> [options]
 
@@ -998,6 +998,13 @@ EXAMPLES:
 WALLET:
   --wallet <name>   Use a named wallet, or "walletconnect" / "wc" for WalletConnect.
                     Defaults to the default local wallet if omitted.
+
+BEFORE BROADCASTING (execute only):
+  --dry-run         Validate and print what would be sent, then stop. Nothing is
+                    signed or broadcast and the quote stays usable. Exits 0.
+  --yes, -y         Skip the confirmation prompt (same as NANSEN_YES=1). The prompt
+                    only appears when stdin is a terminal — agents, CI and pipes run
+                    unprompted either way. Declining exits 1 with nothing signed.
 
 SYMBOLS:
   Common tokens resolve automatically: SOL, ETH, USDC, USDT, WETH
@@ -1935,8 +1942,13 @@ SUBCOMMANDS:
 
 USAGE:
   nansen bridge quote --from-chain base --to-chain hyperliquid --from-token USDC --amount 1000000
-  nansen bridge execute --quote <quoteId>
+  nansen bridge execute --quote <quoteId> [--dry-run] [--yes]
   nansen bridge status --request-id <id>
+
+BEFORE BROADCASTING (execute only):
+  --dry-run   Validate and print what would be signed, then stop. Exits 0.
+  --yes, -y   Skip the confirmation prompt (same as NANSEN_YES=1). The prompt only
+              appears when stdin is a terminal; declining exits 1, signing nothing.
 
 SUPPORTED ROUTES:
   ${formatBridgeRoutes()}`);

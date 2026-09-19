@@ -22,6 +22,7 @@ import {
   signEvmTransaction,
   waitForReceipt,
 } from './trading.js';
+import { formatPlan, guardExecution, promptForConfirmation, resolveExecuteGuard } from './execute-guard.js';
 import { screenOrThrow } from './perp.js';
 import { extractActionErrors } from './hl-client.js';
 import { encodeApproveCalldata } from './trade-validation.js';
@@ -1495,8 +1496,43 @@ function parseBridgeAmount(raw, amountUnit) {
 
 // ── Command builder ──────────────────────────────────────────────────
 
+/**
+ * Describe the transfer `bridge execute` is about to sign, for the
+ * confirmation prompt and for --dry-run. Built entirely from the cached quote
+ * and the resolved signer — it touches no wallet material.
+ */
+function buildBridgeExecutionPlan({ quoteId, quoteData, signerAddress, overrides }) {
+  const response = quoteData.response || {};
+  const details = response.details || {};
+  const currencyIn = details.currencyIn || {};
+  const currencyOut = details.currencyOut || {};
+  const relayerFee = response.fees?.relayer || {};
+  const steps = response.steps || [];
+  const sendAmount = currencyIn.amountFormatted
+    || (quoteData.requestedAmountBaseUnits != null ? `${quoteData.requestedAmountBaseUnits} base units` : null);
+
+  return formatPlan(`Bridge plan — ${quoteData.originChain} → ${quoteData.destinationChain}`, [
+    ['Quote', quoteId],
+    ['Type', response.execution_type],
+    ['Send', [sendAmount, currencyIn.currency?.symbol].filter(Boolean).join(' ') || null],
+    ['Receive', currencyOut.amountFormatted ? `~${[currencyOut.amountFormatted, currencyOut.currency?.symbol].filter(Boolean).join(' ')}` : null],
+    ['Fee', relayerFee.amountUsd ? `$${relayerFee.amountUsd}` : null],
+    ['Wallet', signerAddress],
+    ['Recipient', quoteData.recipient || `${signerAddress} (same address)`],
+    ['Steps', steps.map(s => `${s.id} (${s.kind})`).join(', ') || null],
+    ['Overrides', overrides || null],
+  ]);
+}
+
 export function buildBridgeCommands(deps = {}) {
-  const { log = console.log } = deps;
+  const {
+    log = console.log,
+    // Injected so the confirmation prompt (and whether there is anyone to
+    // answer it) can be driven in tests without a terminal.
+    promptFn = promptForConfirmation,
+    isTTY = process.stdin.isTTY,
+    env = process.env,
+  } = deps;
 
   return {
     'quote': async (args, apiInstance, flags, options) => {
@@ -1660,12 +1696,24 @@ OPTIONS:
     'execute': async (args, apiInstance, flags, options) => {
       const quoteId = options.quote || args[0];
       const walletName = options.wallet;
+      const guard = resolveExecuteGuard(flags, { env, isTTY });
 
       if (!quoteId) {
         throw new CommandError(
           `Usage: nansen bridge execute --quote <quoteId> [--wallet <name>]
 
 Execute a cached bridge quote. Signs transactions and broadcasts them.
+
+OPTIONS:
+  --dry-run       Validate and print what would be signed, then stop. Nothing is
+                  broadcast and the quote stays usable.
+  --yes, -y       Skip the confirmation prompt (same as NANSEN_YES=1). The prompt
+                  only appears when stdin is a terminal; agents, CI and pipes are
+                  never prompted, with or without --yes.
+
+EXIT CODES:
+  0  the transfer was submitted, or the dry run completed
+  1  declined at the confirmation prompt, or the execution failed
 
 RECOVERY OPTIONS (EVM deposit legs only):
   --priority-fee  Priority fee in gwei, overriding the quoted one
@@ -1707,6 +1755,14 @@ from a quote are the same ones that got stuck. Check the stuck nonce with
         nonceSequence = { next: parseInt(s, 10) };
       }
 
+      // One rendering of the overrides — shown in the execution plan, and
+      // again when the EVM leg actually applies them.
+      const overridesSummary = [
+        feeOverrides.priorityFeeWei ? `priority fee ${feeOverrides.priorityFeeWei} wei` : null,
+        feeOverrides.maxFeeWei ? `fee cap ${feeOverrides.maxFeeWei} wei` : null,
+        nonceSequence ? `starting nonce ${nonceSequence.next}` : null,
+      ].filter(Boolean).join(', ') || null;
+
       const quoteData = loadBridgeQuote(quoteId);
       // A truncated or hand-edited quote file can be missing `response.steps`
       // entirely; guard before destructuring so the operator gets an actionable
@@ -1734,7 +1790,7 @@ from a quote are the same ones that got stuck. Check the stuck nonce with
         );
       }
 
-      log(`\n  Executing bridge: ${quoteData.originChain} → ${quoteData.destinationChain}`);
+      log(`\n  ${guard.dryRun ? 'Checking' : 'Executing'} bridge: ${quoteData.originChain} → ${quoteData.destinationChain}`);
       log(`  Type: ${execution_type}`);
       log(`  Steps: ${steps.length}`);
 
@@ -1760,6 +1816,24 @@ from a quote are the same ones that got stuck. Check the stuck nonce with
         ? [signer.address, recipient]
         : [signer.address];
       await screenOrThrow(apiInstance, screenAddresses);
+
+      // ── Acknowledgement gate: --dry-run / --yes ──────────────────────
+      // Placed before the signing credentials are loaded and well before the
+      // first of the quote's steps is signed, so a dry run can sign nothing
+      // and a declined confirmation leaves a multi-step transfer untouched.
+      // See src/execute-guard.js for the TTY rules.
+      const proceed = await guardExecution({
+        plan: buildBridgeExecutionPlan({
+          quoteId,
+          quoteData,
+          signerAddress: signer.address,
+          overrides: overridesSummary,
+        }),
+        ...guard,
+        promptFn,
+        log,
+      });
+      if (!proceed) return undefined;
 
       // Signing material for the wallet resolved above — not a second lookup.
       // Resolving twice re-read the wallet file and, worse, could pick a
@@ -1797,12 +1871,8 @@ from a quote are the same ones that got stuck. Check the stuck nonce with
         preflightEvmBridgeSteps(steps, evmIntent);
         // Overrides move real money differently from what was quoted, so say so
         // rather than letting them apply silently.
-        if (feeOverrides.priorityFeeWei || feeOverrides.maxFeeWei || nonceSequence) {
-          const parts = [];
-          if (feeOverrides.priorityFeeWei) parts.push(`priority fee ${feeOverrides.priorityFeeWei} wei`);
-          if (feeOverrides.maxFeeWei) parts.push(`fee cap ${feeOverrides.maxFeeWei} wei`);
-          if (nonceSequence) parts.push(`starting nonce ${nonceSequence.next}`);
-          log(`  Overrides: ${parts.join(', ')}`);
+        if (overridesSummary) {
+          log(`  Overrides: ${overridesSummary}`);
         }
         for (const [index, step] of steps.entries()) {
           await processEvmStep(step, {
