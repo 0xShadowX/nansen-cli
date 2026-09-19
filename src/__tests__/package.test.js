@@ -51,6 +51,13 @@ describe('Package Integrity', () => {
 
     const packageRoot = join(tmpDir, 'node_modules/nansen-cli');
     const result = execFileSync(process.execPath, [join(packageRoot, 'src/index.js'), '--help'], { cwd: tmpDir, encoding: 'utf8', env: childEnv });
+    // Exercise npm's installed link/shebang (or Windows shim), not only its module.
+    // The relative executable and arguments are fixed; no path enters cmd syntax.
+    const installed = process.platform === 'win32'
+      ? execFileSync('cmd.exe', ['/d', '/s', '/c', 'node_modules\\.bin\\nansen.cmd --help'], { cwd: tmpDir, encoding: 'utf8', env: childEnv })
+      : execFileSync('./node_modules/.bin/nansen', ['--help'], { cwd: tmpDir, encoding: 'utf8', env: childEnv });
+    expect(installed).toContain('COMMANDS');
+    expect(installed).toContain('nansen');
     const postinstall = join(packageRoot, 'scripts/postinstall.js');
     const linkedRoot = join(tmpDir, 'linked-package');
     symlinkSync(packageRoot, linkedRoot, process.platform === 'win32' ? 'junction' : 'dir');

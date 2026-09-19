@@ -179,6 +179,55 @@
       "sourceHead": "4f374e3a86885440d103f1b6d98cd9ac96c774db",
       "kind": "root earlier onboarding repair verification",
       "limits": "161 focused cases and source/artifact hashes at4f374e3, not final merged head or release acceptance."
+    },
+    {
+      "artifact": "API-508-root-956764b-source-verification.md",
+      "sha256": "34857dc940ec8efdec1876b85bd3c5181cfc65eb608b006c08bfaa2412a9e0db",
+      "sourceHead": "956764b207fcc91498cea45c8ba91d70e31e538a",
+      "kind": "root source verification",
+      "limits": "163 focused checks across4files; source equality at956 only, not this repair."
+    },
+    {
+      "artifact": "api508-root-956764b-focused.log",
+      "sha256": "43ba650f9fafc119e775416742a9154a9aad51770de1cf968759339d7a75c2d9",
+      "sourceHead": "956764b207fcc91498cea45c8ba91d70e31e538a",
+      "kind": "root focused source checks",
+      "limits": "163 passed at956; process guards, no live service acceptance."
+    },
+    {
+      "artifact": "API-508-root-956764b-package-verification.md",
+      "sha256": "319986b0911a8b38369b351525c84ceb8745e44050ae522502cbadc80de6972e",
+      "sourceHead": "956764b207fcc91498cea45c8ba91d70e31e538a",
+      "kind": "root unpublished package verification",
+      "limits": "Exact956 archive native Mac/isolatedLinux lifecycle using synthetic issuer/retirement and owned storage. Not this repaired candidate, published/cohort/live acceptance."
+    },
+    {
+      "artifact": "api508-package-956764b/candidate.json",
+      "sha256": "a36bcf73afbaaa6a07c9360c536c5ddc1dfe33c886fc0ba9850ba09b47066526",
+      "sourceHead": "956764b207fcc91498cea45c8ba91d70e31e538a",
+      "kind": "unpublished archive provenance",
+      "limits": "Source version1.45.0 is not a new release;53 src files and postinstall matched956. Archive not relabeled as repaired head."
+    },
+    {
+      "artifact": "api508-package-956764b/nansen-cli-1.45.0.tgz",
+      "sha256": "724711ffad9087d3a2e73e8820435359c8a14dda50b6fe50babc743e630a1be2",
+      "sourceHead": "956764b207fcc91498cea45c8ba91d70e31e538a",
+      "kind": "unpublished candidate archive",
+      "limits": "Archive SHA binds956 only; repairs change candidate. No published version or rollout acceptance."
+    },
+    {
+      "artifact": "api508-package-956764b/mac-native-result.json",
+      "sha256": "cba8f9b5d4bd341e4f377b6704533e91d43b6f77b3e1648b4d4dd5627a4b10c9",
+      "sourceHead": "956764b207fcc91498cea45c8ba91d70e31e538a",
+      "kind": "root installed archive macOS native lifecycle",
+      "limits": "10295-byte synthetic bundle, one nonce rotation/fresh-process read/stubbed retirement/cleanup. No current repair/package proof or live ceremony."
+    },
+    {
+      "artifact": "api508-package-956764b/linux-native-result.json",
+      "sha256": "3b9363e97933c16639722846d5a0cd52b7aff142f209615d4440e6a97ec150c9",
+      "sourceHead": "956764b207fcc91498cea45c8ba91d70e31e538a",
+      "kind": "root installed archive Debian/GNOME native lifecycle",
+      "limits": "Same956 archive,10295-byte bundle, locked refusal76ms, daemon restart/read/stubbed cleanup. No Windows/desktop/PAM/reboot/daemon late-write acceptance."
     }
   ],
   "candidate": {
@@ -236,11 +285,11 @@
       "linux-native-refresh-a25bc51-result.json"
     ],
     "jointWithDpop": "joint-cli-refresh-api-9190-a25bc51-dpop-result.json",
-    "reconciliation": "Exact dependency merged with API508 history preserved; auth implementation unchanged from dependency. Independent API508 final-head review pending.",
+    "reconciliation": "Exact dependency merged with API508 history preserved; auth implementation unchanged. API508 B/security completed at956764b with changes requested; current repair requires final root verification.",
     "limits": "Root final dependency proof only. Candidate/package native, live/cohort/recovery acceptance remains null. Historical records retain original heads and hashes."
   },
   "acceptanceNotes": {
-    "exactHeadNativeRenewal": "Final candidate/package proof, not frozen dependency proof. See frozenDependencyVerification for completed a25bc511 evidence.",
+    "exactHeadNativeRenewal": "Current repaired candidate/package acceptance remains missing. Root local unpublished956764b archive proof is separately source-attributed under evidence, not this new head or rollout acceptance.",
     "fullSessionAccessTokenInvalidation": "Required before rollout: actual logout invalidates original, rotated and copied tokens for that session; other sessions/accounts/API keys unaffected. Refresh-only retirement or natural expiry does not satisfy this gate.",
     "measuredRevocationPropagationAndDurability": "Deployed issuer/gateway/API observed rejection, measured propagation, restart/outage fail-closed behavior and durable retained feed/anchors; recorded/pending receipt is not observed rejection."
   }
