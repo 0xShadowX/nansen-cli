@@ -14,6 +14,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { PassThrough } from 'stream';
 
 import {
   formatPlan,
@@ -22,7 +23,7 @@ import {
   resolveExecuteGuard,
 } from '../execute-guard.js';
 import { buildTradeExecutionPlan, buildTradingCommands, evmTxHash, saveQuote } from '../trading.js';
-import { parseArgs, runCLI } from '../cli.js';
+import { parseArgs, promptForConfirmation, runCLI } from '../cli.js';
 import { createWallet, showWallet } from '../wallet.js';
 
 const BASE_ETH = '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
@@ -43,7 +44,12 @@ describe('execute guard flags', () => {
     expect(isYesEnvSet({ NANSEN_YES: '1' })).toBe(true);
     expect(isYesEnvSet({ NANSEN_YES: 'true' })).toBe(true);
     expect(isYesEnvSet({ NANSEN_YES: 'YES' })).toBe(true);
+    expect(isYesEnvSet({ NANSEN_YES: ' yes ' })).toBe(true);
     expect(isYesEnvSet({ NANSEN_YES: '0' })).toBe(false);
+    expect(isYesEnvSet({ NANSEN_YES: 'false' })).toBe(false);
+    expect(isYesEnvSet({ NANSEN_YES: 'off' })).toBe(false);
+    expect(isYesEnvSet({ NANSEN_YES: '2' })).toBe(false);
+    expect(isYesEnvSet({ NANSEN_YES: 'definitely' })).toBe(false);
     expect(isYesEnvSet({ NANSEN_YES: '' })).toBe(false);
     expect(isYesEnvSet({})).toBe(false);
     expect(resolveExecuteGuard({}, { env: { NANSEN_YES: '1' } }).assumeYes).toBe(true);
@@ -57,6 +63,11 @@ describe('execute guard flags', () => {
     const short = parseArgs(['trade', 'execute', '-y', '--quote', 'q1']);
     expect(short.flags.y).toBe(true);
     expect(short.options.quote).toBe('q1');
+
+    // Assignment syntax is not valid for this parser and must not silently
+    // become consent to broadcast.
+    const malformed = parseArgs(['trade', 'execute', '--yes=false', '--quote', 'q1']);
+    expect(resolveExecuteGuard(malformed.flags, { env: {}, isTTY: true }).assumeYes).toBe(false);
   });
 
   it('drops empty rows from a plan and aligns the rest', () => {
@@ -109,6 +120,28 @@ describe('guardExecution', () => {
   it('tells the aborting user how to skip the prompt next time', async () => {
     await expect(guardExecution({ plan, isTTY: true, promptFn: async () => 'n', log: () => {} }))
       .rejects.toThrow(/--yes.*NANSEN_YES=1.*--dry-run/s);
+  });
+
+  it('fails closed when the prompt throws', async () => {
+    await expect(guardExecution({
+      plan,
+      isTTY: true,
+      promptFn: async () => { throw new Error('terminal unavailable'); },
+      log: () => {},
+    })).rejects.toThrow('terminal unavailable');
+  });
+
+  it('fails closed instead of hanging when stdin reaches EOF', async () => {
+    const input = new PassThrough();
+    const output = new PassThrough();
+    const answer = promptForConfirmation('Continue? ', { input, output });
+    input.end();
+    await expect(answer).resolves.toBe('');
+  });
+
+  it('refuses an interactive execution when no CLI prompt was injected', async () => {
+    await expect(guardExecution({ plan, isTTY: true, log: () => {} }))
+      .rejects.toMatchObject({ code: 'CONFIRMATION_UNAVAILABLE' });
   });
 });
 
@@ -333,6 +366,35 @@ describe('trade execute --dry-run / --yes', () => {
     expect(executeBodies).toHaveLength(0);
   });
 
+  it('shows every quote that fallback execution may broadcast', async () => {
+    stubFetch();
+    const quoteId = nativeQuote('0x742d35Cc6bF3f4e0e3a8DD7e37ff4e4Be4E4B4');
+    const quotePath = path.join(tmpHome, '.nansen', 'quotes', `${quoteId}.json`);
+    const saved = JSON.parse(fs.readFileSync(quotePath, 'utf8'));
+    saved.response.quotes.push({
+      ...saved.response.quotes[0],
+      aggregator: 'relay',
+      outAmount: '2990000000',
+    });
+    fs.writeFileSync(quotePath, JSON.stringify(saved, null, 2));
+
+    const logs = [];
+    const cmds = buildTradingCommands({
+      log: message => logs.push(message),
+      promptFn: async () => 'n',
+      isTTY: true,
+      env: {},
+    });
+    await expect(cmds.execute([], null, {}, { quote: quoteId }))
+      .rejects.toMatchObject({ code: 'CONFIRMATION_DECLINED' });
+
+    const output = logs.join('\n');
+    expect(output).toContain('(quote 1 of 2)');
+    expect(output).toContain('(quote 2 of 2)');
+    expect(output).toContain('may try these candidates in order');
+    expect(executeBodies).toHaveLength(0);
+  });
+
   it('broadcasts after an interactive "y"', async () => {
     stubFetch({ allowBroadcast: true });
     createWallet('default', 'testpass');
@@ -414,6 +476,31 @@ describe('trade execute --dry-run / --yes', () => {
     expect(exit).toHaveBeenCalledWith(1);
     expect(out.join('\n')).toContain('CONFIRMATION_DECLINED');
     expect(executeBodies).toHaveLength(0);
+  });
+
+  it('uses stdin TTY state when stdout is redirected', async () => {
+    stubFetch();
+    const quoteId = nativeQuote('0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4');
+    Object.defineProperty(process.stdin, 'isTTY', { value: true, configurable: true });
+    Object.defineProperty(process.stdout, 'isTTY', { value: false, configurable: true });
+    try {
+      const promptFn = vi.fn(async () => 'n');
+      const exit = vi.fn();
+      await runCLI(['trade', 'execute', '--quote', quoteId], {
+        output: () => {},
+        errorOutput: () => {},
+        log: () => {},
+        exit,
+        promptFn,
+      });
+
+      expect(promptFn).toHaveBeenCalledTimes(1);
+      expect(exit).toHaveBeenCalledWith(1);
+      expect(executeBodies).toHaveLength(0);
+    } finally {
+      delete process.stdin.isTTY;
+      delete process.stdout.isTTY;
+    }
   });
 
   it('describes a cross-chain swap by route in the plan', async () => {

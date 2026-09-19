@@ -15,7 +15,6 @@
  * simply a no-op. Declining the prompt exits 1 with nothing signed.
  */
 
-import * as readline from 'readline';
 import { CommandError } from './api.js';
 
 // Accepted spellings for NANSEN_YES. Anything else (unset, "0", "false", an
@@ -31,7 +30,7 @@ export function isYesEnvSet(env = process.env) {
  * Read the guard's inputs off the parsed flags. `-y` arrives as `flags.y`
  * because single-dash tokens are always parsed as valueless flags.
  */
-export function resolveExecuteGuard(flags = {}, { env = process.env, isTTY = process.stdin.isTTY } = {}) {
+export function resolveExecuteGuard(flags = {}, { env = process.env, isTTY = false } = {}) {
   return {
     dryRun: Boolean(flags['dry-run']),
     assumeYes: Boolean(flags.yes || flags.y) || isYesEnvSet(env),
@@ -53,20 +52,6 @@ export function formatPlan(title, rows = [], notes = []) {
   ].join('\n');
 }
 
-/**
- * Ask a yes/no question on stdin. Exported for injection: core command modules
- * receive it as a dependency rather than reaching for the terminal themselves.
- * The question goes to stderr so it never lands in redirected stdout.
- */
-export async function promptForConfirmation(question, { input = process.stdin, output = process.stderr } = {}) {
-  const rl = readline.createInterface({ input, output });
-  try {
-    return await new Promise(resolve => rl.question(question, resolve));
-  } finally {
-    rl.close();
-  }
-}
-
 function isAffirmative(answer) {
   return /^y(es)?$/i.test(String(answer ?? '').trim());
 }
@@ -83,7 +68,7 @@ export async function guardExecution({
   dryRun = false,
   assumeYes = false,
   isTTY = false,
-  promptFn = promptForConfirmation,
+  promptFn,
   log = () => {},
   question = 'Broadcast this transaction? [y/N] ',
 }) {
@@ -97,6 +82,13 @@ export async function guardExecution({
   // Non-interactive stdin (agents, CI, pipes): unchanged, deterministic, never
   // blocked on a prompt. --yes is accepted here and does nothing.
   if (!isTTY || assumeYes) return true;
+
+  if (typeof promptFn !== 'function') {
+    throw new CommandError(
+      'Cannot request confirmation because no interactive prompt is available. Pass --yes to proceed or --dry-run to preview.',
+      'CONFIRMATION_UNAVAILABLE',
+    );
+  }
 
   log(plan);
   const answer = await promptFn(question);

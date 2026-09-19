@@ -1068,6 +1068,33 @@ export async function prompt(question, hidden = false, { input = process.stdin, 
   });
 }
 
+// Confirmation prompts belong to the CLI adapter rather than trade/bridge
+// core. EOF and Ctrl+C resolve as the safe default ("no") so a closed input
+// cannot leave an irreversible command hanging forever.
+export async function promptForConfirmation(question, { input = process.stdin, output = process.stderr } = {}) {
+  const rl = readline.createInterface({ input, output });
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (answer) => {
+      if (settled) return;
+      settled = true;
+      rl.close();
+      resolve(answer);
+    };
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      rl.close();
+      reject(error);
+    };
+
+    rl.once('close', () => finish(''));
+    rl.once('SIGINT', () => finish(''));
+    rl.once('error', fail);
+    rl.question(question, finish);
+  });
+}
+
 // Build command handlers (returns object with handler functions)
 export function buildCommands(deps = {}) {
   // Allow dependency injection for testing
@@ -2087,10 +2114,25 @@ export async function runCLI(rawArgs, deps = {}) {
     exit = process.exit,
     NansenAPIClass = NansenAPI,
     commandOverrides = {},
-    // Injectable so tests can exercise both renderings; defaults to the real
-    // terminal, which is false under a pipe or in CI.
+    // Output TTY controls human-vs-structured error rendering. Keep the
+    // existing `isTTY` seam for callers/tests that inject both terminal states.
     isTTY = process.stdout.isTTY,
   } = deps;
+
+  // Confirmation is governed by INPUT interactivity. stdout may be redirected
+  // while a person still answers on stdin, so it must not decide whether an
+  // irreversible command prompts. Callers can split the two signals explicitly
+  // with `isInputTTY`; legacy `isTTY` injection still drives both.
+  const isInputTTY = deps.isInputTTY ?? (deps.isTTY ?? process.stdin.isTTY);
+
+  // Pass the CLI-owned terminal seams into command modules. Keeping these out
+  // of core means direct/library callers are non-interactive unless they
+  // explicitly provide a prompt.
+  const commandDeps = {
+    ...deps,
+    isTTY: isInputTTY,
+    promptFn: deps.promptFn ?? promptForConfirmation,
+  };
 
   const { _: positional, flags, options } = parseArgs(rawArgs);
 
@@ -2135,7 +2177,7 @@ export async function runCLI(rawArgs, deps = {}) {
 
   // mcp prints its own output via `log`; runCLI callers inject their stdout
   // sink as `output`, so map it across (an explicit `log` dep still wins).
-  const commands = { ...buildCommands(deps), ...buildWalletCommands(deps), ...buildTradingCommands(deps), ...buildAlertsCommands(deps), ...buildAgentCommands(deps), ...buildMcpCommands({ ...deps, log: deps.log ?? output }), ...buildCompletionCommands({ ...deps, log: deps.log ?? output }), ...commandOverrides };
+  const commands = { ...buildCommands(commandDeps), ...buildWalletCommands(commandDeps), ...buildTradingCommands(commandDeps), ...buildAlertsCommands(commandDeps), ...buildAgentCommands(commandDeps), ...buildMcpCommands({ ...commandDeps, log: deps.log ?? output }), ...buildCompletionCommands({ ...commandDeps, log: deps.log ?? output }), ...commandOverrides };
 
   if (flags.version || flags.v) {
     output(VERSION);

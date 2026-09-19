@@ -17,7 +17,7 @@ import { getWalletConnectAddress, sendTransactionViaWalletConnect, sendSolanaTra
 import { retrievePassword } from './keychain.js';
 import { validateQuoteInput, validateBalance, resolvePercentAmount, validateGasBalance, encodeApproveCalldata, assertValidApprovalSpender, assertQuoteMatchesRequest, assertSwapCalldataNotBareTransfer, assertSwapOutcome, assertSolanaInstructionsSafe, assertSolanaSwapOutcome, approvalAmountForSwap, needsAllowanceRevoke, OVERSIZED_ALLOWANCE_MULTIPLIER, EVM_BRIDGE_NATIVE_FEE_SLACK, isBridgeRequest } from './trade-validation.js';
 import { readCompactU16 } from './solana-tx.js';
-import { formatPlan, guardExecution, promptForConfirmation, resolveExecuteGuard } from './execute-guard.js';
+import { formatPlan, guardExecution, resolveExecuteGuard } from './execute-guard.js';
 export { readCompactU16 };
 import { CHAIN_RPCS } from './rpc-urls.js';
 import { simulateAssetChanges, SwapSimulationError, hasSimulationRpc } from './swap-simulation.js';
@@ -2136,8 +2136,8 @@ export function buildTradingCommands(deps = {}) {
     log = console.log,
     // Injected so the confirmation prompt (and whether there is anyone to
     // answer it) can be driven in tests without a terminal.
-    promptFn = promptForConfirmation,
-    isTTY = process.stdin.isTTY,
+    promptFn,
+    isTTY = false,
     env = process.env,
   } = deps;
 
@@ -2696,28 +2696,37 @@ EXAMPLES:
         // the first approval transaction: a dry run needs no password and can
         // sign nothing, and a declined confirmation cannot have put an
         // approval on-chain. See src/execute-guard.js for the TTY rules.
-        // The quote the loop below will actually try first: quotes without
-        // transaction data are skipped there, and hasAnyTransaction above
-        // guarantees at least one in range has it.
-        const planIndex = allQuotes.findIndex((q, i) => i >= startIndex && i < endIndex && q?.transaction);
-        const planQuote = allQuotes[planIndex];
-        const planWallet = quoteData.request?.walletAddress
-          || quoteData.response?.metadata?.userWalletAddress
-          || planQuote?.transaction?.from
-          || null;
-        const plan = await buildTradeExecutionPlan({
-          quoteId,
-          quoteData,
-          quote: planQuote,
-          chainConfig,
-          quoteIndex: planIndex,
-          quoteCount: allQuotes.length,
-          walletAddress: planWallet,
-          gasless,
-          noSimulate,
-          noVerifyOutcome,
-          probe: guard.dryRun,
-        });
+        // Execution falls back across candidates when one fails before a
+        // definitive broadcast. Consent must therefore cover every candidate
+        // that may be signed, rather than displaying only the first one and
+        // silently broadcasting a different fallback quote later.
+        const planCandidates = allQuotes
+          .map((quote, index) => ({ quote, index }))
+          .filter(({ quote, index }) => index >= startIndex && index < endIndex && quote?.transaction);
+        const plans = [];
+        for (const { quote, index } of planCandidates) {
+          const planWallet = quoteData.request?.walletAddress
+            || quoteData.response?.metadata?.userWalletAddress
+            || quote.transaction?.from
+            || null;
+          plans.push(await buildTradeExecutionPlan({
+            quoteId,
+            quoteData,
+            quote,
+            chainConfig,
+            quoteIndex: index,
+            quoteCount: allQuotes.length,
+            walletAddress: planWallet,
+            gasless,
+            noSimulate,
+            noVerifyOutcome,
+            probe: guard.dryRun,
+          }));
+        }
+        const fallbackNotice = planCandidates.length > 1
+          ? '\n  The CLI may try these candidates in order until one broadcasts successfully.'
+          : '';
+        const plan = `${plans.join('\n')}${fallbackNotice}`;
         const proceed = await guardExecution({ plan, ...guard, promptFn, log });
         if (!proceed) return undefined;
 

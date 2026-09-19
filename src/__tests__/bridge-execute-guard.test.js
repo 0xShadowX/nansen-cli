@@ -178,6 +178,43 @@ describe('bridge execute --dry-run / --yes', () => {
     expect(sendCalls()).toHaveLength(0);
   });
 
+  it('--dry-run rejects a tampered later step before loading credentials', async () => {
+    const quoteId = writeQuote('bridge-dry-run-tampered');
+    const quote = readQuote(quoteId);
+    quote.response.steps.push({
+      id: 'second-deposit',
+      kind: 'transaction',
+      items: [{
+        status: 'incomplete',
+        data: { from: ADDR, to: ROUTER, data: depositCalldata(ADDR), value: '0', maxFeePerGas: '1000000' },
+      }],
+    });
+    fs.writeFileSync(path.join(quotesDir, `${quoteId}.json`), JSON.stringify(quote, null, 2));
+
+    const cmds = buildBridgeCommands({ log: () => {}, promptFn: vi.fn(), isTTY: true, env: {} });
+    await expect(cmds.execute([], api, { 'dry-run': true }, { quote: quoteId, wallet: 'w' }))
+      .rejects.toMatchObject({ code: 'UNEXPECTED_ACTION' });
+
+    expect(exportWallet).not.toHaveBeenCalled();
+    expect(signEvmTransaction).not.toHaveBeenCalled();
+    expect(sendCalls()).toHaveLength(0);
+  });
+
+  it('screens before dry-run or confirmation and loads no credentials when blocked', async () => {
+    const quoteId = writeQuote('bridge-sanctioned');
+    api.request.mockResolvedValueOnce({ results: [{ address: ADDR, sanctioned: true }] });
+    const promptFn = vi.fn();
+    const cmds = buildBridgeCommands({ log: () => {}, promptFn, isTTY: true, env: {} });
+
+    await expect(cmds.execute([], api, { 'dry-run': true }, { quote: quoteId, wallet: 'w' }))
+      .rejects.toThrow(/compliance blocklist/i);
+
+    expect(promptFn).not.toHaveBeenCalled();
+    expect(exportWallet).not.toHaveBeenCalled();
+    expect(signEvmTransaction).not.toHaveBeenCalled();
+    expect(sendCalls()).toHaveLength(0);
+  });
+
   it('aborts with nothing sent when an interactive user declines', async () => {
     const quoteId = writeQuote('bridge-declined');
     const promptFn = vi.fn(async () => 'n');
@@ -190,6 +227,7 @@ describe('bridge execute --dry-run / --yes', () => {
     expect(promptFn).toHaveBeenCalledWith('Broadcast this transaction? [y/N] ');
     expect(logs.join('\n')).toContain('Bridge plan — base → hyperliquid');
     expect(signEvmTransaction).not.toHaveBeenCalled();
+    expect(exportWallet).not.toHaveBeenCalled();
     expect(sendCalls()).toHaveLength(0);
     expect(readQuote(quoteId).executedAt).toBeUndefined();
   });

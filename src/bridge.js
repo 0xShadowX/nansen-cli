@@ -22,7 +22,7 @@ import {
   signEvmTransaction,
   waitForReceipt,
 } from './trading.js';
-import { formatPlan, guardExecution, promptForConfirmation, resolveExecuteGuard } from './execute-guard.js';
+import { formatPlan, guardExecution, resolveExecuteGuard } from './execute-guard.js';
 import { screenOrThrow } from './perp.js';
 import { extractActionErrors } from './hl-client.js';
 import { encodeApproveCalldata } from './trade-validation.js';
@@ -1529,8 +1529,8 @@ export function buildBridgeCommands(deps = {}) {
     log = console.log,
     // Injected so the confirmation prompt (and whether there is anyone to
     // answer it) can be driven in tests without a terminal.
-    promptFn = promptForConfirmation,
-    isTTY = process.stdin.isTTY,
+    promptFn,
+    isTTY = false,
     env = process.env,
   } = deps;
 
@@ -1817,6 +1817,59 @@ from a quote are the same ones that got stuck. Check the stuck nonce with
         : [signer.address];
       await screenOrThrow(apiInstance, screenAddresses);
 
+      // These checks need only the cached quote and public signer address. A
+      // dry run exercises them before returning; a real run keeps the existing
+      // password/error ordering and repeats them after credentials resolve but
+      // before any step can sign or broadcast.
+      const preflightPlan = () => {
+        let evmIntent = null;
+        let hlIntent = null;
+        if (execution_type === 'evm_transaction') {
+          evmIntent = {
+          chain: quoteData.originChain,
+          signerAddress: signer.address,
+          requestedAmountBaseUnits: quoteData.requestedAmountBaseUnits ?? null,
+          };
+          preflightEvmBridgeSteps(steps, evmIntent);
+        } else if (execution_type === 'hyperliquid_signature') {
+          const currencyIn = quoteData.response.details?.currencyIn;
+          if (quoteData.requestedAmountBaseUnits != null && currencyIn?.amount != null) {
+            let currencyInScaled;
+            let requestedScaled;
+            try {
+              currencyInScaled = BigInt(currencyIn.amount);
+              requestedScaled = BigInt(quoteData.requestedAmountBaseUnits);
+            } catch {
+              throw new CommandError(
+                `Quote input "${currencyIn.amount}" is not a valid amount. Request a new quote.`,
+                'AMOUNT_MISMATCH',
+              );
+            }
+            if (currencyInScaled !== requestedScaled) {
+              throw new CommandError(
+                `Quote input ${currencyIn.amount} does not match the requested ${quoteData.requestedAmountBaseUnits}. Request a new quote.`,
+                'AMOUNT_MISMATCH',
+              );
+            }
+          }
+          hlIntent = {
+            reviewedAmountBaseUnits: quoteData.requestedAmountBaseUnits ?? null,
+            hlNetwork: 'Mainnet',
+            signerAddress: signer.address,
+          };
+          preflightHlBridgeSteps(steps, hlIntent);
+        } else {
+          throw new CommandError(
+            `Quote "${quoteId}" has unsupported execution type "${execution_type}". Request a new quote.`,
+            'INVALID_INPUT',
+          );
+        }
+        return { evmIntent, hlIntent };
+      };
+
+      // Dry runs return at the gate, so run the sign-free preflight here.
+      if (guard.dryRun) preflightPlan();
+
       // ── Acknowledgement gate: --dry-run / --yes ──────────────────────
       // Placed before the signing credentials are loaded and well before the
       // first of the quote's steps is signed, so a dry run can sign nothing
@@ -1840,6 +1893,7 @@ from a quote are the same ones that got stuck. Check the stuck nonce with
       // different wallet than the one just screened if the default changed in
       // between.
       const creds = resolveSigningCredentials(signer);
+      const { evmIntent, hlIntent } = preflightPlan();
 
       // Consume the quote at each INDIVIDUAL broadcast, before any receipt wait.
       // A tx can be accepted by the network and then have waitForReceipt time
@@ -1860,15 +1914,6 @@ from a quote are the same ones that got stuck. Check the stuck nonce with
         });
 
       if (execution_type === 'evm_transaction') {
-        const evmIntent = {
-          chain: quoteData.originChain,
-          signerAddress: signer.address,
-          requestedAmountBaseUnits: quoteData.requestedAmountBaseUnits ?? null,
-        };
-        // Validate every step's calldata against intent before any step is
-        // signed or broadcast — see preflightEvmBridgeSteps for why this can't
-        // just be the per-step check processEvmStep already does.
-        preflightEvmBridgeSteps(steps, evmIntent);
         // Overrides move real money differently from what was quoted, so say so
         // rather than letting them apply silently.
         if (overridesSummary) {
@@ -1888,45 +1933,6 @@ from a quote are the same ones that got stuck. Check the stuck nonce with
           markBroadcast(index);
         }
       } else if (execution_type === 'hyperliquid_signature') {
-        // Check E: the quote's own currencyIn.amount — the amount it displayed
-        // and will send through /perp/bridge/quote — must equal what was
-        // actually requested at quote time. The amount cap below (check B) is
-        // anchored to requestedAmountBaseUnits directly, not to this display
-        // field, so this check is UI-consistency defense-in-depth: it catches a
-        // quote whose displayed send amount has drifted from the request,
-        // rather than gating the cap itself.
-        const currencyIn = quoteData.response.details?.currencyIn;
-        if (quoteData.requestedAmountBaseUnits != null && currencyIn?.amount != null) {
-          let currencyInScaled, requestedScaled;
-          try {
-            currencyInScaled = BigInt(currencyIn.amount);
-            requestedScaled = BigInt(quoteData.requestedAmountBaseUnits);
-          } catch {
-            throw new CommandError(
-              `Quote input "${currencyIn.amount}" is not a valid amount. Request a new quote.`,
-              'AMOUNT_MISMATCH',
-            );
-          }
-          if (currencyInScaled !== requestedScaled) {
-            throw new CommandError(
-              `Quote input ${currencyIn.amount} does not match the requested ${quoteData.requestedAmountBaseUnits}. Request a new quote.`,
-              'AMOUNT_MISMATCH',
-            );
-          }
-        }
-        const hlIntent = {
-          // Anchored to what the CLIENT persisted at quote time from the
-          // user's own --amount, not to any server-supplied display field —
-          // see assertHlBridgeActionIntent for why.
-          reviewedAmountBaseUnits: quoteData.requestedAmountBaseUnits ?? null,
-          hlNetwork: 'Mainnet',
-          signerAddress: signer.address,
-        };
-        // Validate every step's payload (both the authorize leg and the HL
-        // action leg) before any of them are signed or posted — see
-        // preflightHlBridgeSteps for why this can't just be the per-step
-        // check the loops below already do.
-        preflightHlBridgeSteps(steps, hlIntent);
         if (creds.provider === 'privy') {
           const { PrivyClient } = await import('./privy.js');
           const privyClient = new PrivyClient(process.env.PRIVY_APP_ID, process.env.PRIVY_APP_SECRET);
