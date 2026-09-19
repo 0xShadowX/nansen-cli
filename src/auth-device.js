@@ -104,42 +104,52 @@ export async function pairDevice(client, { signal, onPending, onIssued, onBefore
   await onPending({ verification_uri: complete.toString(), user_code: data.user_code, expires_at: new Date(deadline).toISOString() });
   let interval = data.interval * 1000;
   let failures = 0;
-  while (now() < deadline) {
-    await wait(Math.min(interval, deadline - now()), signal);
-    if (now() >= deadline) break;
-    let result;
-    await onBeforePoll?.();
-    try { result = await client.request('/auth/device/token', { device_code: data.device_code }, signal, Math.min(15000, deadline - now())); }
-    catch (error) {
-      if (error.code !== 'AUTH_NETWORK_ERROR' || ++failures > 2) throw error;
-      interval = Math.min(interval * 2, 60000); continue;
+  let pollInFlight = false;
+  try {
+    while (now() < deadline) {
+      await wait(Math.min(interval, deadline - now()), signal);
+      if (now() >= deadline) break;
+      let result;
+      await onBeforePoll?.();
+      signal?.throwIfAborted();
+      pollInFlight = true;
+      try { result = await client.request('/auth/device/token', { device_code: data.device_code }, signal, Math.min(15000, deadline - now())); }
+      catch (error) {
+        if (error.code !== 'AUTH_NETWORK_ERROR' || ++failures > 2) throw error;
+        interval = Math.min(interval * 2, 60000); continue;
+      }
+      const { response: poll, data: tokens } = result;
+      if (poll.ok) {
+        const bundle = { issuer: client.issuer, audience: client.audience, privateJwk: client.privateJwk, accessToken: tokens.access_token, refreshToken: tokens.refresh_token, scope: tokens.scope };
+        // Retain cleanup authority even if the rest of the issuance is malformed.
+        onIssued?.(bundle);
+        if (tokens.token_type !== 'Bearer' || !Number.isFinite(tokens.expires_in) || tokens.expires_in <= 0 || tokens.expires_in > 3600) throw new AuthError('PAIRING_FAILED', 'Invalid token response. Run nansen login again.');
+        let exp;
+        try { exp = JSON.parse(Buffer.from(tokens.access_token.split('.')[1], 'base64url')).exp * 1000; } catch { /* validation below */ }
+        if (!Number.isFinite(exp)) throw new AuthError('PAIRING_FAILED', 'Invalid token response. Run nansen login again.');
+        bundle.expiresAt = Math.min(now() + tokens.expires_in * 1000, exp);
+        validateSession(bundle, now());
+        bundle.accountId = await client.verify(bundle.accessToken, signal);
+        return bundle;
+      }
+      const retryAfter = Number(poll.headers.get('retry-after')) * 1000;
+      if (poll.status === 429 || poll.status >= 500) {
+        if (++failures <= 2) { interval = Math.max(interval * 2, Number.isFinite(retryAfter) ? retryAfter : 0); continue; }
+        throw transportError();
+      }
+      if (poll.status === 400 && tokens.error === 'authorization_pending') { pollInFlight = false; continue; }
+      if (poll.status === 400 && tokens.error === 'slow_down') { pollInFlight = false; interval = Math.max(interval + 5000, Number.isFinite(retryAfter) ? retryAfter : 0); continue; }
+      if (tokens.error === 'access_denied') throw Object.assign(new AuthError('PAIRING_DENIED', 'Browser approval was denied. The previous credential is unchanged.'), { provenUnissued: failures === 0 });
+      if (tokens.error === 'expired_token') break;
+      throw new AuthError('PAIRING_FAILED', 'Browser approval could not be redeemed. Run nansen login again.');
     }
-    const { response: poll, data: tokens } = result;
-    if (poll.ok) {
-      const bundle = { issuer: client.issuer, audience: client.audience, privateJwk: client.privateJwk, accessToken: tokens.access_token, refreshToken: tokens.refresh_token, scope: tokens.scope };
-      // Retain cleanup authority even if the rest of the issuance is malformed.
-      onIssued?.(bundle);
-      if (tokens.token_type !== 'Bearer' || !Number.isFinite(tokens.expires_in) || tokens.expires_in <= 0 || tokens.expires_in > 3600) throw new AuthError('PAIRING_FAILED', 'Invalid token response. Run nansen login again.');
-      let exp;
-      try { exp = JSON.parse(Buffer.from(tokens.access_token.split('.')[1], 'base64url')).exp * 1000; } catch { /* validation below */ }
-      if (!Number.isFinite(exp)) throw new AuthError('PAIRING_FAILED', 'Invalid token response. Run nansen login again.');
-      bundle.expiresAt = Math.min(now() + tokens.expires_in * 1000, exp);
-      validateSession(bundle, now());
-      bundle.accountId = await client.verify(bundle.accessToken, signal);
-      return bundle;
-    }
-    const retryAfter = Number(poll.headers.get('retry-after')) * 1000;
-    if (tokens.error === 'authorization_pending') continue;
-    if (tokens.error === 'slow_down') { interval = Math.max(interval + 5000, Number.isFinite(retryAfter) ? retryAfter : 0); continue; }
-    if (poll.status === 429 || poll.status >= 500) {
-      if (++failures <= 2) { interval = Math.max(interval * 2, Number.isFinite(retryAfter) ? retryAfter : 0); continue; }
-      throw transportError();
-    }
-    if (tokens.error === 'access_denied') throw Object.assign(new AuthError('PAIRING_DENIED', 'Browser approval was denied. The previous credential is unchanged.'), { provenUnissued: failures === 0 });
-    if (tokens.error === 'expired_token') break;
-    throw new AuthError('PAIRING_FAILED', 'Browser approval could not be redeemed. Run nansen login again.');
+    throw Object.assign(new AuthError('PAIRING_EXPIRED', 'The approval code expired or was consumed. Run nansen login again.'), { provenUnissued: failures === 0 });
+  } catch (error) {
+    // Only this live attempt can prove cancellation before issuance. Never
+    // rewrite the durable marker on pending: a later crash stays conservative.
+    if (signal?.aborted) error.provenUnissued = failures === 0 && !pollInFlight;
+    throw error;
   }
-  throw Object.assign(new AuthError('PAIRING_EXPIRED', 'The approval code expired or was consumed. Run nansen login again.'), { provenUnissued: failures === 0 });
 }
 export async function retireSession(bundle, options = {}) {
   try {

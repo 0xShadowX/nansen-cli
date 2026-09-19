@@ -6,6 +6,8 @@ import { AuthError, authDirectory } from './auth-credentials.js';
 import { createAuthStore } from './auth-store.js';
 
 const queues = new Map();
+const recognizedJournal = name => /^[a-f0-9-]{36}\.json$/.test(name);
+const journalError = () => new AuthError('AUTH_JOURNAL_INVALID', 'Authentication recovery cannot safely read auth-operations. Preserve its files and secure-store entries. Stop all CLI authentication processes, restore only a known-valid journal backup for this state, or contact support using docs/browser-login.md#damaged-or-unrecognized-journals.');
 const stateError = () => new AuthError('AUTH_STATE_INVALID', 'Saved authentication cannot be read safely. Repair config.json permissions or restore the file; no other credential was selected.');
 function safePath(file, directory = false) {
   if (!fs.existsSync(file)) return;
@@ -116,7 +118,7 @@ export function createAuthState({ directory = authDirectory(), store = createAut
         const target = path.join(dir, file); safePath(target); fs.unlinkSync(target);
       }
     }
-    const files = fs.readdirSync(journalDir).filter(f => /^[a-f0-9-]{36}\.json$/.test(f));
+    const files = fs.readdirSync(journalDir).filter(recognizedJournal);
     // Drain a bounded batch even from pre-existing over-limit directories.
     // Admission is capped separately; logout must always be able to recover.
     for (const file of files.slice(0, 8)) {
@@ -124,9 +126,12 @@ export function createAuthState({ directory = authDirectory(), store = createAut
       const release = await acquire(path.join(journalDir, `${id}.lock`), undefined, false);
       if (!release) continue;
       try {
-        safePath(path.join(journalDir, file));
-        const journal = JSON.parse(fs.readFileSync(path.join(journalDir, file), 'utf8'));
-        if (journal.id !== id || !Array.isArray(journal.generations) || journal.generations.length > 2 || journal.generations.some(g => !/^[a-f0-9-]{36}$/.test(g)) || (journal.unissued !== undefined && typeof journal.unissued !== 'boolean') || (journal.candidateRemote !== undefined && !['unconfirmed', 'recorded_pending', 'refresh_only'].includes(journal.candidateRemote))) throw stateError();
+        let journal;
+        try {
+          safePath(path.join(journalDir, file));
+          journal = JSON.parse(fs.readFileSync(path.join(journalDir, file), 'utf8'));
+        } catch { throw journalError(); }
+        if (!journal || journal.id !== id || !Array.isArray(journal.generations) || journal.generations.length > 2 || journal.generations.some(g => typeof g !== 'string' || !/^[a-f0-9-]{36}$/.test(g)) || (journal.unissued !== undefined && typeof journal.unissued !== 'boolean') || (journal.candidateRemote !== undefined && !['unconfirmed', 'recorded_pending', 'refresh_only'].includes(journal.candidateRemote))) throw journalError();
         results.push(...await cleanJournal(journal, read()));
       } finally { release(); }
     }
@@ -138,15 +143,15 @@ export function createAuthState({ directory = authDirectory(), store = createAut
       const release = await acquire(lockFile, undefined, false);
       if (release) { release(); fs.unlinkSync(lockFile); }
     }
-    if (fs.readdirSync(journalDir).some(f => f.endsWith('.json'))) results.push({ local: 'pending', remote: 'not_attempted' });
+    if (fs.readdirSync(journalDir).some(recognizedJournal)) results.push({ local: 'pending', remote: 'not_attempted' });
+    if (fs.readdirSync(journalDir).some(f => f.endsWith('.json') && !recognizedJournal(f))) results.push({ local: 'unrecognized', remote: 'not_attempted' });
     return results;
   }
   return {
-    store,
     async begin({ preflight = true, signal } = {}) {
       return locked(async () => {
         const cleanup = await recover();
-        if (fs.readdirSync(journalDir).filter(f => f.endsWith('.json')).length >= 8) throw new AuthError('AUTH_CLEANUP_REQUIRED', 'Unlock the credential store and run nansen logout to finish cleanup.');
+        if (fs.readdirSync(journalDir).filter(recognizedJournal).length >= 8) throw new AuthError('AUTH_CLEANUP_REQUIRED', 'Unlock the credential store and run nansen logout to finish cleanup.');
         const id = randomUUID();
         const epoch = read().auth?.selectionEpoch ?? null;
         const release = await acquire(path.join(journalDir, `${id}.lock`), signal);
@@ -158,17 +163,20 @@ export function createAuthState({ directory = authDirectory(), store = createAut
           if (preflight) await store.preflight(id);
           return attempt;
         } catch (err) {
-          try { await cleanJournal(journal, read()); } finally { release(); }
+          try { await cleanJournal(journal, read()); } catch { /* preserve original failure and any remaining journal */ } finally { release(); }
           throw err;
         }
       }, signal);
     },
-    async markIssuancePossible(attempt) {
+    async markIssuancePossible(attempt, signal) {
+      signal?.throwIfAborted();
+      if (attempt.journal.unissued === false) return;
       return locked(async () => {
-        if (!attempt.journal.unissued) return;
-        attempt.journal.unissued = false;
-        await atomic(journalPath(attempt.id), attempt.journal);
-      });
+        if (attempt.journal.unissued === false) return;
+        const journal = { ...attempt.journal, unissued: false };
+        await atomic(journalPath(attempt.id), journal);
+        attempt.journal = journal;
+      }, signal);
     },
     async install(attempt, { bundle, apiKey, baseUrl }, signal) {
       return locked(async () => {
@@ -217,7 +225,7 @@ export function createAuthState({ directory = authDirectory(), store = createAut
         catch (error) { if (read().auth?.selectionEpoch !== next.auth.selectionEpoch) throw error; }
         let cleanup;
         try { await barrier('logout-committed'); cleanup = await recover(); }
-        catch { cleanup = [{ local: 'incomplete', remote: 'unconfirmed' }]; }
+        catch (error) { cleanup = [{ local: 'incomplete', remote: 'unconfirmed', ...(error.code === 'AUTH_JOURNAL_INVALID' && { code: error.code }) }]; }
         return { removed: Boolean(config.apiKey || old?.kind === 'session'), cleanup };
       });
     },

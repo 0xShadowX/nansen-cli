@@ -6,14 +6,16 @@ import { openAuthBrowser } from './auth-browser.js';
 export function defaultAuthState() { return createAuthState({ retire: retireSession }); }
 export function cleanupMessage(results = []) {
   const messages = [];
-  if (results.some(r => r.local === 'incomplete')) messages.push('Secure-store deletion incomplete. Unlock the credential store and run nansen logout to finish cleanup.');
+  if (results.some(r => r.code === 'AUTH_JOURNAL_INVALID')) messages.push('Authentication recovery cannot safely read auth-operations. Preserve its files and secure-store entries; see docs/browser-login.md#damaged-or-unrecognized-journals before retrying cleanup.');
+  if (results.some(r => r.local === 'unrecognized')) messages.push('Unrecognized JSON files remain in auth-operations. They were preserved and not treated as credential journals. See docs/browser-login.md#damaged-or-unrecognized-journals.');
+  if (results.some(r => r.local === 'incomplete' && r.code !== 'AUTH_JOURNAL_INVALID')) messages.push('Secure-store deletion incomplete. Unlock the credential store and run nansen logout to finish cleanup.');
   if (results.some(r => r.local === 'pending')) messages.push('Authentication cleanup remains pending. After other login attempts finish and the credential store is unlocked, rerun nansen logout to process the next bounded batch.');
   if (results.some(r => r.remote === 'unconfirmed')) messages.push('Remote revocation unconfirmed. Review the old CLI device in your Nansen account security settings.');
   if (results.some(r => r.remote === 'recorded_pending')) messages.push('Family revocation recorded; API propagation is pending.');
   if (results.some(r => r.remote === 'refresh_only')) messages.push('Refresh family retired; issued access tokens may remain valid until expiry.');
   return messages;
 }
-export async function browserLogin({ flags = {}, env = process.env, isTTY = process.stdout.isTTY, log = console.log, errorOutput = console.error, state = defaultAuthState(), clientFactory = createDeviceClient, pair = pairDevice, openBrowser = openAuthBrowser, signals = process } = {}) {
+export async function browserLogin({ flags = {}, env = process.env, isTTY = process.stdout.isTTY, log = console.log, errorOutput = console.error, state = defaultAuthState(), clientFactory = createDeviceClient, pair = pairDevice, retire = retireSession, openBrowser = openAuthBrowser, signals = process } = {}) {
   const machine = flags.json || !isTTY;
   const emit = (event, data) => { if (machine) log(JSON.stringify({ version: 1, event, ...data })); };
   const progress = machine ? errorOutput : log;
@@ -38,7 +40,7 @@ export async function browserLogin({ flags = {}, env = process.env, isTTY = proc
     cleanup.push(...attempt.cleanup);
     const bundle = await pair(client, {
       signal: controller.signal,
-      onBeforePoll: () => state.markIssuancePossible(attempt),
+      onBeforePoll: () => state.markIssuancePossible(attempt, controller.signal),
       onIssued: value => { candidate = value; attempt.journal.unissued = false; },
       onPending: async pending => {
         emit('pending', pending);
@@ -58,8 +60,8 @@ export async function browserLogin({ flags = {}, env = process.env, isTTY = proc
   } catch (error) {
     // A pointer commit is authoritative even if acknowledgement/cleanup failed.
     saved ||= attempt?.committed === true;
-    if (!saved && !attempt?.uncertain && candidate) {
-      const result = await retireSession(candidate);
+    if (!saved && attempt && !attempt.uncertain && candidate) {
+      const result = await retire(candidate);
       attempt.journal.candidateRemote = result.remote;
     } else if (attempt && error.provenUnissued === true) attempt.journal.unissued = true;
     if (attempt) {

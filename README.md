@@ -26,7 +26,7 @@ Three options — pick whichever fits your setup:
    For automation, inject `NANSEN_API_KEY` through your environment or secret manager.
    Get your API key at [app.nansen.ai/auth/agent-setup](https://app.nansen.ai/auth/agent-setup).
 
-2. **x402 micropayment** (no key needed): `nansen wallet create`, fund with USDC on Base or Solana, or USDT0 on X Layer, then call any endpoint — the CLI signs `Payment-Signature` headers automatically on 402 responses. See [Wallet](#wallet).
+2. **x402 micropayment** (no key needed): `nansen wallet create`, fund with USDC on Base or Solana, or USDT0 on X Layer, then call any endpoint — with no selected API key or browser session, the CLI signs `Payment-Signature` headers automatically on 402 responses. Selected credentials never trigger automatic payment; top up the selected account or use an explicit manual API-key payment. See [Wallet](#wallet).
 
 3. **MPP via tempo** (no key needed): install the [tempo CLI](https://docs.tempo.xyz) separately, run `tempo wallet login` to set up, then call the Nansen API through `tempo request`. The Nansen API selects the MPP rail when it sees `Authorization: Payment ...`. See [MPP / Tempo](#mpp--tempo) below.
 

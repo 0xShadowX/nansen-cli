@@ -2624,11 +2624,11 @@
         }
       },
       "returns": {
-        "description": "Operational command. Machine events: pending {verification_uri,user_code,expires_at}; saved {account_id,effective_source,cleanup}; error/cancelled {code,message,cleanup}. Never includes device_code or tokens."
+        "description": "Operational command. Machine events: pending {verification_uri,user_code,expires_at}; saved {account_id,effective_source,cleanup}; error/cancelled {code,message,cleanup}. Never includes device_code or tokens. Cleanup preserves malformed journals and reports AUTH_JOURNAL_INVALID; unrecognized JSON files remain untouched."
       }
     },
     "logout": {
-      "description": "Clear saved API authentication and attempt browser-family retirement. Preserve wallets and environment keys. Report incomplete local deletion or remote revocation separately."
+      "description": "Clear saved API authentication and attempt browser-family retirement. Preserve wallets and environment keys. Report incomplete local deletion or remote revocation separately. Preserve damaged recovery journals and report auth-operations repair guidance."
     }
   },
   "globalOptions": {

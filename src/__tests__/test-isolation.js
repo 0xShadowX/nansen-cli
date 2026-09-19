@@ -10,3 +10,7 @@ delete process.env.NANSEN_API_KEY;
 process.env.npm_config_cache = path.join(isolatedHome, 'npm-cache');
 process.env.NODE_NO_WARNINGS = '1';
 afterAll(() => fs.rmSync(isolatedHome, { recursive: true, force: true }));
+
+// Tests must explicitly inject transports. A missed retirement/analytics mock
+// must never send even synthetic credential material to a production service.
+globalThis.fetch = async () => { throw new Error('Unexpected outbound fetch: inject a test transport'); };

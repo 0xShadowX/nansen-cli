@@ -106,3 +106,15 @@ it.each(['before-rename', 'after-rename'])('SIGKILL at poll-marker %s preserves 
   expect(result.error).toBeUndefined();
   expect(result.result.cleanup).toContainEqual({ local: 'removed', remote: phase === 'before-rename' ? 'not_needed' : 'unconfirmed' });
 });
+
+it('already durable poll markers bypass a competing process global lock, first markers do not', async () => {
+  const dir = directory(); const a = await worker(dir), b = await worker(dir), c = await worker(dir);
+  await a.call('begin'); await a.call('poll-marker'); await c.call('begin'); await b.call('begin');
+  void b.call('install', { target: { phase: 'stored' } }); await b.barrier();
+  const marked = a.call('poll-marker');
+  expect(await Promise.race([marked, new Promise(resolve => setTimeout(() => resolve('blocked'), 1000))])).not.toBe('blocked');
+  let firstDone = false; const first = c.call('poll-marker').then(result => { firstDone = true; return result; });
+  await new Promise(resolve => setTimeout(resolve, 150)); expect(firstDone).toBe(false);
+  await kill(b.child); expect((await first).error).toBeUndefined();
+  await a.call('finish'); await c.call('finish');
+});

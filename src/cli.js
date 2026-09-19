@@ -24,7 +24,7 @@ import { getUpdateNotification, getUpgradeNotice, scheduleUpdateCheck } from './
 import { getAuthStatus, runDoctorChecks, runConnectivityChecks, formatDoctorReport } from './doctor.js';
 import { refreshCostMapIfStale, getCostForEndpoint, creditsCharged } from './cost-cache.js';
 import { creditWarning, noticeWarnings } from './response-meta.js';
-import { trackCommandSucceeded, trackCommandFailed } from './telemetry.js';
+import { trackCommandSucceeded, trackCommandFailed, trackAuthCommand } from './telemetry.js';
 import { createRequire } from 'module';
 import * as readline from 'readline';
 
@@ -2094,8 +2094,8 @@ export async function runCLI(rawArgs, deps = {}) {
   // stdout is piped straight into a shell, so keep the update check out of it.
   const isAuthMutation = command === 'login' || command === 'logout';
   const isOfflineCommand = command === 'auth' || (command === 'doctor' && flags.offline) || isMcpUsage || command === 'completion';
-  const trackSucceeded = isOfflineCommand ? async () => {} : trackCommandSucceeded;
-  const trackFailed = isOfflineCommand ? async () => {} : trackCommandFailed;
+  const trackSucceeded = isOfflineCommand ? async () => {} : isAuthMutation ? metadata => trackAuthCommand({ ...metadata, command }) : trackCommandSucceeded;
+  const trackFailed = isOfflineCommand ? async () => {} : isAuthMutation ? metadata => trackAuthCommand({ ...metadata, command, failed: true }) : trackCommandFailed;
 
   // Update check (read cached result + schedule background refresh)
   const updateNotification = getUpdateNotification(VERSION);

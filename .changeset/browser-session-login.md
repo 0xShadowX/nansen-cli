@@ -6,4 +6,6 @@ Plain `nansen login` now requests fresh browser approval and saves a revocable s
 
 Automatic x402 wallet payment now requires anonymous access. A selected API key, including a valid key returning 402, no longer triggers automatic signing or credit purchase. Top up that account or use an explicit manual payment signature; anonymous automatic payments and manual API-key payments retain their behavior.
 
-Native credential operations acquire helper-owned execution exclusion before receiving secrets and retain it through executor termination, preventing orphan writes from overtaking logout recovery after CLI process death.
+Native credential operations acquire helper-owned execution exclusion before receiving secrets and retain it through executor termination, preventing a surviving helper from overtaking logout recovery after CLI process death. Native-daemon outstanding-write cancellation remains an OS acceptance gap; physical deletion is best effort.
+
+Keep cancellation cleanup conservative after ambiguous issuance, preserve damaged recovery journals with actionable diagnostics, and restrict login/logout telemetry to fixed paths and allowed metadata.

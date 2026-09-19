@@ -20,7 +20,7 @@ function fixture() {
   const memory = memoryOperation();
   const store = createAuthStore(memory);
   const state = createAuthState({ directory, store, retire: async () => ({ remote: 'recorded_pending' }) });
-  return { home, directory, memory, state, env: { HOME: home }, file: path.join(directory, 'config.json') };
+  return { home, directory, memory, store, state, env: { HOME: home }, file: path.join(directory, 'config.json') };
 }
 describe('browser login public command integration', () => {
   it.each(['none', 'environment', 'saved-key', 'saved-session'])('fresh plain login from %s saves B and never prints secrets', async initial => {
@@ -70,7 +70,7 @@ describe('browser login public command integration', () => {
     const bundle = sessionFixture();
     const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ refresh_family_revoked: true, access_tokens_revoked: false })));
     vi.stubGlobal('fetch', fetch);
-    if (failure === 'storage') vi.spyOn(f.state.store, 'write').mockRejectedValue(new Error('write failure'));
+    if (failure === 'storage') vi.spyOn(f.store, 'write').mockRejectedValue(new Error('write failure'));
     const pair = async (_client, { onIssued }) => {
       onIssued(bundle);
       if (failure === 'verification') throw new AuthError('SESSION_VERIFICATION_FAILED', 'Candidate rejected.');
