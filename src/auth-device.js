@@ -34,19 +34,21 @@ export function createDeviceClient({ audience, privateJwk = createDeviceKey(), f
   const issuer = trustedIssuer(audience);
   let nonce;
   async function request(route, body, signal, timeout = 15000) {
+    const deadline = performance.now() + timeout;
     for (let attempt = 0; attempt < 2; attempt++) {
       signal?.throwIfAborted();
+      if (performance.now() >= deadline) throw transportError();
       const controller = new AbortController();
       const abort = () => controller.abort();
       signal?.addEventListener('abort', abort, { once: true });
-      const timer = setTimeout(abort, Math.max(1, timeout));
+      const timer = setTimeout(abort, Math.max(1, deadline - performance.now()));
       try {
         const url = issuer + route;
         const response = await fetchFn(url, { method: 'POST', redirect: 'error', signal: controller.signal, headers: { 'Content-Type': 'application/json', DPoP: deviceProof(privateJwk, url, nonce, now()) }, body: JSON.stringify(body) });
         const data = await readResponse(response);
         const nextNonce = response.headers.get('dpop-nonce');
         if (nextNonce && nextNonce.length <= 1024) nonce = nextNonce;
-        if (response.status === 401 && data.error === 'use_dpop_nonce' && nextNonce && attempt === 0) continue;
+        if (response.status === 401 && data?.error === 'use_dpop_nonce' && nextNonce && nextNonce.length <= 1024 && attempt === 0) continue;
         return { response, data };
       } catch {
         signal?.throwIfAborted();
@@ -76,7 +78,7 @@ export function createDeviceClient({ audience, privateJwk = createDeviceKey(), f
     },
   };
 }
-export function validateSession(bundle, now = Date.now()) {
+export function validateSession(bundle, now = Date.now(), { allowExpired = false } = {}) {
   try {
     if (bundle.issuer !== trustedIssuer(bundle.audience) || bundle.scope !== 'nansen:read' || typeof bundle.refreshToken !== 'string' || !bundle.refreshToken || bundle.refreshToken.length > 4096 || typeof bundle.accessToken !== 'string') throw new Error();
     const [header, payload, signature, extra] = bundle.accessToken.split('.');
@@ -86,7 +88,8 @@ export function validateSession(bundle, now = Date.now()) {
     const jkt = createHash('sha256').update(JSON.stringify({ crv: publicJwk.crv, kty: publicJwk.kty, x: publicJwk.x, y: publicJwk.y })).digest('base64url');
     if (extra || !signature || h.alg !== 'ES256' || publicJwk.crv !== 'P-256' || claims.iss !== bundle.issuer || claims.aud !== bundle.audience || claims.scope !== 'nansen:read' || claims.cnf?.jkt !== jkt || !Number.isFinite(claims.exp) || !Number.isFinite(bundle.expiresAt) || bundle.expiresAt > claims.exp * 1000) throw new Error();
     if (claims.session_access_revocation_version !== 1) throw new AuthError('BROWSER_SESSION_SETUP_REQUIRED', 'The session lacks supported revocation coverage. Browser login may not be enabled for this cohort. Ask the operator to verify issuer SESSION_ACCESS_REVOCATION_ENABLED and API BROWSER_SESSION_ACCOUNT_ENABLED before retrying; repeated pairing will not repair server setup.');
-    if (bundle.expiresAt <= now) throw new AuthError('SESSION_EXPIRED', 'The saved browser session has expired. Run: nansen login. Automatic renewal is not available in this prerelease.');
+    if (!Number.isFinite(claims.iat) || !Number.isFinite(claims.nbf) || claims.exp <= claims.iat || claims.exp - claims.iat > 3600 || claims.nbf > now / 1000 || typeof claims.sub !== 'string' || !claims.sub || (bundle.accountId !== undefined && claims.sub !== bundle.accountId)) throw new Error();
+    if (!allowExpired && bundle.expiresAt <= now) throw new AuthError('SESSION_EXPIRED', 'The saved browser access token has expired. Retry the command to renew it.');
   } catch (error) {
     if (error instanceof AuthError) throw error;
     throw new AuthError('INVALID_BROWSER_SESSION', 'The selected browser session is invalid. Run: nansen login.');
@@ -155,7 +158,7 @@ export async function retireSession(bundle, options = {}) {
   try {
     if (bundle.issuer !== trustedIssuer(bundle.audience) || typeof bundle.refreshToken !== 'string' || !bundle.refreshToken) return { remote: 'unconfirmed' };
     const client = createDeviceClient({ ...options, audience: bundle.audience, privateJwk: bundle.privateJwk });
-    const { response, data } = await client.request('/token/revoke', { refresh_token: bundle.refreshToken });
+    const { response, data } = await client.request('/token/revoke', { refresh_token: bundle.refreshToken }, options.signal);
     if (!response.ok || data.refresh_family_revoked !== true) return { remote: 'unconfirmed' };
     if (data.access_revocation?.status === 'recorded' && data.access_revocation.coverage === 'complete_family' && data.access_revocation.propagation === 'pending' && data.access_revocation.version === 1) return { remote: 'recorded_pending' };
     // Only the pinned recorded/pending and legacy refresh-only receipts are
@@ -164,4 +167,34 @@ export async function retireSession(bundle, options = {}) {
     if (data.access_tokens_revoked === false) return { remote: 'refresh_only' };
   } catch { /* bounded best effort, never expose transport or proof material */ }
   return { remote: 'unconfirmed' };
+}
+
+// Only the owner calls this after durably recording possible consumption.
+export async function refreshSession(bundle, { signal, now = Date.now, fetchFn = globalThis.fetch } = {}) {
+  const uncertain = () => new AuthError('SESSION_RENEWAL_UNCERTAIN', 'Session renewal outcome is unknown. Run: nansen login. The saved refresh credential was not retried.');
+  const started = now();
+  const client = createDeviceClient({ audience: bundle.audience, privateJwk: bundle.privateJwk, now, fetchFn });
+  let result;
+  try { result = await client.request('/token/refresh', { refresh_token: bundle.refreshToken, audience: bundle.audience }, signal, 20000); }
+  catch { throw uncertain(); }
+  const { response, data } = result;
+  if (!response.ok) {
+    if (response.status === 401 && data?.error === 'invalid_refresh_token') throw new AuthError('SESSION_REFRESH_REJECTED', 'The saved session cannot be renewed. Run: nansen login.');
+    if ((response.status === 429 && data?.error === 'rate_limited') ||
+        (response.status === 401 && ['use_dpop_nonce', 'use_dpop_proof', 'invalid_dpop_proof'].includes(data?.error)) ||
+        (response.status === 400 && data?.error === 'invalid_request')) {
+      const seconds = Number(response.headers.get('retry-after'));
+      throw Object.assign(new AuthError('SESSION_REFRESH_RETRYABLE', 'Session renewal was refused before rotation. Check connectivity and system time, then retry later.'), {
+        retryNotBefore: now() + (Number.isFinite(seconds) && seconds > 0 ? Math.min(seconds, 86400) * 1000 : 1000),
+      });
+    }
+    throw uncertain();
+  }
+  try {
+    if (data.token_type !== 'Bearer' || !Number.isFinite(data.expires_in) || data.expires_in <= 0 || data.expires_in > 3600 || data.refresh_token === bundle.refreshToken || data.access_token === bundle.accessToken) throw new Error();
+    const exp = JSON.parse(Buffer.from(data.access_token.split('.')[1], 'base64url')).exp * 1000;
+    const replacement = { ...bundle, accessToken: data.access_token, refreshToken: data.refresh_token, expiresAt: Math.min(started + data.expires_in * 1000, exp) };
+    validateSession(replacement, now());
+    return replacement;
+  } catch { throw uncertain(); }
 }

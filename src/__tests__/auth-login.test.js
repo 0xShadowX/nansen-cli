@@ -132,13 +132,14 @@ describe('selected credential and payment boundary', () => {
     await expect(buildMcpCommands({ log }).mcp(['install', 'claude-code'], api, { 'dry-run': true }, {})).rejects.toMatchObject({ code: 'API_KEY_REQUIRED' });
     expect(log).not.toHaveBeenCalled();
   });
-  it('expired selected sessions fail before network or cache', async () => {
+  it('expired selected sessions never use cache after uncertain renewal', async () => {
     const f = fixture(); const bundle = sessionFixture({ now: Date.now() - 7200000 });
     const attempt = await f.state.begin(); await f.state.install(attempt, { bundle, baseUrl: bundle.audience }); await f.state.finish(attempt);
     const fetch = vi.fn(); vi.stubGlobal('fetch', fetch);
     const selection = resolveCredential({ env: f.env });
     const api = new NansenAPI(null, bundle.audience, { credential: selection, authState: f.state, cache: { enabled: true } });
-    await expect(api.getAccount()).rejects.toMatchObject({ code: 'SESSION_EXPIRED' }); expect(fetch).not.toHaveBeenCalled();
+    await expect(api.getAccount()).rejects.toMatchObject({ code: 'SESSION_RENEWAL_UNCERTAIN' }); expect(fetch).toHaveBeenCalledOnce();
+    expect(fetch.mock.calls[0][0]).toBe(bundle.issuer + '/token/refresh');
   });
   it('browser session errors never echo tokens and never fall back', async () => {
     const f = fixture(); const bundle = sessionFixture(); const attempt = await f.state.begin(); await f.state.install(attempt, { bundle, baseUrl: bundle.audience }); await f.state.finish(attempt);
