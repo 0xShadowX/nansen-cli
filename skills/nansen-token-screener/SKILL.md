@@ -15,6 +15,8 @@ allowed-tools: Bash(nansen:*)
 ---
 ## Authentication
 
+Browser login requests `nansen:api` for API-key-equivalent account API permissions; existing OAuth/MCP `nansen:read` semantics and separate wallet authorization are unchanged.
+
 Before any research command or loop, require an explicitly selected API key or saved browser session. Run `nansen auth status` first. Its cached/unverified metadata does not prove credential validity or unlocked storage. Cached access-token expiry alone does not mean the session is unusable: the CLI normally renews a selected session automatically during an already-authorized research task, without another consent request or a separate account check. Stop on anonymous selection, invalid authentication state, blocked or uncertain renewal/cleanup, or an actual authentication failure, including rejected or expired refresh authority. Follow the CLI error guidance; use the free `nansen account` check when troubleshooting calls for it. Do not unset a failed key, erase a session or switch to anonymous access to retry.
 
 Use `nansen login` for fresh browser approval when server admission and the supported platform cohort are enabled, or configure a conventional API key. `NANSEN_API_KEY` overrides the saved session. OpenClaw's optional `primaryEnv` mapping preserves configured API-key injection; it is not a required-key gate or proof of authentication. Normal credits and entitlements apply. Login does not purchase credits. Browser rollout acceptance is still pending.
@@ -52,7 +54,7 @@ nansen research token indicators --token $TOKEN --chain $CHAIN
 nansen research token flow-intelligence --token $TOKEN --chain $CHAIN
 # → net_flow_usd per label: smart_trader, whale, exchange, fresh_wallets, public_figure
 
-# Nansen Score Top Tokens — "what should I buy?" (admitted direct-data endpoint; normal account entitlements apply)
+# Nansen Score Top Tokens — "what should I buy?" (account API endpoint; normal entitlements apply)
 # Use this FIRST for discovery, then drill into individual tokens with `indicators` above
 nansen research token top-tokens --limit 25
 nansen research token top-tokens --market-cap largecap --limit 10

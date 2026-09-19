@@ -942,8 +942,9 @@ AUTHENTICATION:
   nansen login --human         Explicit legacy key setup; also persists an injected env key
   NANSEN_API_KEY overrides saved authentication. Selected credentials never auto-pay.
   Browser sessions renew automatically; uncertain renewal requires fresh login.
+  Browser nansen:api sessions have API-key-equivalent account permissions; wallet signing is separate.
   Browser login needs native storage and enabled server admission; release gates remain open.
-  Only admitted direct-data research is supported; agent, portfolio, web and execution are excluded.
+  Public API endpoints keep their usual account, plan and credit checks; MCP key export is separate.
 
 TRADING:
   nansen trade quote --chain solana --from SOL --to USDC --amount 1000000000

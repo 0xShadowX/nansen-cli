@@ -122,11 +122,11 @@ describe('selected credential and payment boundary', () => {
     await new NansenAPI('A', 'https://api.nansen.ai', { defaultHeaders: { 'Payment-Signature': 'manual' } }).getAccount();
     expect(fetch.mock.calls[0][1].headers).toMatchObject({ apikey: 'A', 'Payment-Signature': 'manual' });
   });
-  it('never exports a browser session through key-only trading or MCP seams', async () => {
+  it('never misrepresents a browser session as an exportable MCP API key', async () => {
     const f = fixture(); const bundle = sessionFixture(); const attempt = await f.state.begin();
     await f.state.install(attempt, { bundle }); await f.state.finish(attempt);
     vi.stubEnv('HOME', f.home); vi.stubEnv('NANSEN_API_KEY', undefined);
-    expect(loadConfig().apiKey).toBeNull(); // trading verifySwapOutcome caller
+    expect(loadConfig().apiKey).toBeNull(); // legacy key accessor must not export a bearer
     const api = new NansenAPI(); expect(api.apiKey).toBeNull();
     const log = vi.fn();
     await expect(buildMcpCommands({ log }).mcp(['install', 'claude-code'], api, { 'dry-run': true }, {})).rejects.toMatchObject({ code: 'API_KEY_REQUIRED' });
@@ -226,7 +226,7 @@ it.each(['response', 'jwt'])('fresh pairing rejects over-ceiling %s lifetime wit
   const bundle = sessionFixture(); const parts = bundle.accessToken.split('.'); const claims = JSON.parse(Buffer.from(parts[1], 'base64url'));
   if (kind === 'jwt') { claims.exp = claims.iat + 3601; parts[1] = Buffer.from(JSON.stringify(claims)).toString('base64url'); }
   const fetchFn = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ device_code: 'fixture', user_code: 'ABCD-EFGH', verification_uri: 'https://idp.nansen.ai/device', verification_uri_complete: 'https://idp.nansen.ai/device?user_code=ABCD-EFGH', expires_in: 600, interval: 1 })))
-    .mockResolvedValueOnce(new Response(JSON.stringify({ access_token: parts.join('.'), refresh_token: bundle.refreshToken, token_type: 'Bearer', scope: 'nansen:read', expires_in: kind === 'response' ? 3601 : 3600 })));
+    .mockResolvedValueOnce(new Response(JSON.stringify({ access_token: parts.join('.'), refresh_token: bundle.refreshToken, token_type: 'Bearer', scope: 'nansen:api', expires_in: kind === 'response' ? 3601 : 3600 })));
   const retire = vi.fn(async () => ({ remote: 'recorded_pending' }));
   const client = createDeviceClient({ audience: bundle.audience, privateJwk: bundle.privateJwk, fetchFn });
   await expect(browserLogin({ env: f.env, state: f.state, clientFactory: () => client, pair: (c, options) => pairDevice(c, { ...options, wait: async () => {} }), retire, signals: new EventEmitter(), isTTY: false, log: vi.fn(), errorOutput: vi.fn() })).rejects.toMatchObject({ code: 'BROWSER_SESSION_SETUP_REQUIRED', message: expect.stringContaining('3600 seconds') });

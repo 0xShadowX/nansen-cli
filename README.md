@@ -28,7 +28,7 @@ nansen logout                # clear saved API auth; preserve wallets and enviro
 
 Browser login requires working native credential storage and enabled server admission. Normal-release acceptance is pending; no published browser cohort is established by this branch. See [storage, supported scope and recovery](docs/browser-login.md). Email/password and Google sign-in are supported by the device-flow contract; employee-gated audiences require Google. Apple device sign-in remains deferred.
 
-Existing API-key users can run commands directly with `NANSEN_API_KEY`. It overrides the saved session, even after successful browser login. To deliberately save an injected key, use explicit `nansen login --human`; without an environment key this prompts in a human terminal. `nansen login --api-key <key>` remains available but puts the key in shell history. Saved-auth mutations require the native lock binding. Get a conventional key at [agent setup](https://app.nansen.ai/auth/agent-setup); MCP, agent fast/expert and other key-only workflows still need one.
+Existing API-key users can run commands directly with `NANSEN_API_KEY`. It overrides the saved session, even after successful browser login. To deliberately save an injected key, use explicit `nansen login --human`; without an environment key this prompts in a human terminal. `nansen login --api-key <key>` remains available but puts the key in shell history. Saved-auth mutations require the native lock binding. Get a conventional key at [agent setup](https://app.nansen.ai/auth/agent-setup); MCP installation exports a separate persistent API key; it does not export browser sessions.
 
 Anonymous payment options remain separate:
 
@@ -82,13 +82,15 @@ Run `nansen schema --pretty` for the full subcommand and field reference.
 
 ## Browser login compatibility and scope
 
+Browser login requests `nansen:api` for the same account/API permissions as a pasted API key, including smart-alert CRUD, public agent, portfolio, web, beta and existing trading API operations. The same endpoint ownership, plan, credit, quota, sanctions and geographic checks apply. Existing OAuth/MCP `nansen:read` grants keep their existing semantics. Wallet signing remains separate.
+
 Plain `nansen login` always starts fresh browser approval, whether no credential, an environment key, a saved key or a saved session exists. It preflights secure storage, shows a link/code, verifies the approved account through the free account endpoint, then replaces the single saved API credential. `nansen login --no-browser` runs the same flow in a remote terminal. Non-TTY login and `--json` emit NDJSON pending and terminal events; the private device code and tokens are never printed.
 
 `NANSEN_API_KEY` still overrides the saved session. Login verifies the new account independently and explains this override. Failed approval or installation preserves the previous selection. `nansen auth status` is offline and labels saved metadata as cached/unverified; `nansen account` checks the effective credential live. `nansen logout` removes saved API authentication and attempts family retirement, preserving wallets and environment keys. Remote revocation and physical deletion failures are reported separately.
 
 This is a breaking change for scripts that used plain login to persist an environment key. Use explicit `nansen login --human` with that environment key, or `--api-key <key>` with its existing shell-history risk. Direct key-authenticated commands need no migration. Automatic wallet payment now requires anonymous access: even a valid selected API key returning 402 will not automatically buy credits or sign a payment. Top up the selected account or explicitly supply `--x402-payment-signature`. Selected invalid credentials never cause an account switch; intended anonymous payments and explicit manual API-key payments retain their behavior.
 
-No published cohort or normal-release acceptance is claimed. Selected browser sessions renew automatically near expiry. A lost refresh response without a complete stored replacement requires fresh login; the consumed credential is never retried. Browser research is limited to the documented stable-v1 direct-data routes. Agent fast/expert, portfolio DeFi, web, beta/historical-* commands, internal operations, wallet support and execution remain excluded. Credits and plan restrictions still apply to admitted routes. Public local/remote walkthroughs, ledger evidence and OS verification remain gates. Read [browser login custody, compatibility and release gates](docs/browser-login.md) before cohort use. Browser sessions do not add wallet-signing authority and cannot be exported as MCP API keys.
+No published cohort or normal-release acceptance is claimed. Selected browser sessions renew automatically near expiry. A lost refresh response without a complete stored replacement requires fresh login; the consumed credential is never retried. There is no browser-only research route allowlist. Public API permission parity does not grant internal service identity or wallet signing authority. Account admission and non-account API admission remain separately gated and default off. Public local/remote walkthroughs, ledger evidence and OS verification remain gates. Read [browser login custody, compatibility and release gates](docs/browser-login.md) before cohort use. Browser sessions do not add wallet-signing authority and cannot be exported as MCP API keys.
 
 ## MCP
 
@@ -369,7 +371,7 @@ Any field may be absent or `null`, meaning unknown — never assume zero. A low-
 |---------|-----|
 | `command not found` | `npm install -g nansen-cli` |
 | Global install reports an older version | `npm i -g nansen-cli@latest --registry=https://registry.npmjs.org/ --prefer-online`, then check `which -a nansen` for stale binaries |
-| `UNAUTHORIZED` after login | `nansen auth status` shows the effective credential and cached/unverified session metadata. Correct an invalid environment key first; browser login does not override it. Use fresh `nansen login` for a rejected session, or explicit legacy key setup for key-only workflows |
+| `UNAUTHORIZED` after login | `nansen auth status` shows the effective credential and cached/unverified session metadata. Correct an invalid environment key first; browser login does not override it. Use fresh `nansen login` for a rejected session, or explicit legacy key setup for integration credentials |
 | MCP client lists tools but paid calls fail | Run `npx -y nansen-cli mcp verify` with the saved key or `NANSEN_API_KEY`, and ensure that same key is in the client's `NANSEN-API-KEY` header |
 | Anything else misbehaving | `nansen doctor` checks your whole setup (auth, wallets, caches, connectivity) with a fix per finding |
 | Empty perp _research_ results | Use `--symbol BTC`, not `--token`. Perps are Hyperliquid-only. |

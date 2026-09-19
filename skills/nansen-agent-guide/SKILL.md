@@ -4,8 +4,6 @@ description: Routing guide -- when to use `nansen agent` (AI research) vs direct
 metadata:
   openclaw:
     requires:
-      env:
-        - NANSEN_API_KEY
       bins:
         - nansen
     primaryEnv: NANSEN_API_KEY
@@ -15,10 +13,15 @@ metadata:
         bins: [nansen]
 allowed-tools: Bash(nansen:*)
 ---
+## Authentication
+
+Nansen account API calls accept a selected `nansen:api` browser session or conventional API key with the same permissions. `NANSEN_API_KEY` takes precedence; optional `primaryEnv` preserves configured-key injection. Run `nansen auth status` for offline selection. Cached access expiry alone permits automatic renewal during an authorized task. Stop on anonymous selection, invalid state, blocked/uncertain renewal or actual auth failure; never drop a credential or fall back to anonymous x402 payment. Browser login does not grant wallet signing, privileged service identity or a persistent MCP integration key. Preserve all confirmation, signing, sanctions and geographic checks below. Browser rollout acceptance is still pending.
+
+
 
 # Agent vs CLI Routing
 
-This mixed workflow requires a conventional API key for `nansen agent`, including fast and expert modes. Browser-only users can run the admitted direct-data examples below and interpret their results locally. Fresh browser login does not grant agent access.
+Public agent fast/expert and direct API commands accept the selected nansen:api browser session or conventional API key under the same account permissions.
 
 | Need a... | Use |
 |-----------|-----|
@@ -63,4 +66,4 @@ Cost: 5-50 credits per call
 
 Plain `nansen login` requests fresh browser approval; `--no-browser` prints the link/code for remote use. NANSEN_API_KEY overrides the single saved credential. Use `nansen auth status` for offline cached/unverified selection details and `nansen account` for a free live check. Explicit `login --human` or `login --api-key` retains legacy key setup. Selected browser sessions renew automatically; uncertain renewal requires fresh login without replay or fallback to another account/payment.
 
-Browser admission is limited to documented stable-v1 direct-data routes, subject to server enablement, platform verification, credits and entitlements. Agent fast/expert, portfolio DeFi, web, beta, internal, wallet and execution routes are excluded. Browser sessions cannot authorize wallet signing or be exported as MCP keys. Normal-release acceptance and a published cohort remain pending.
+Browser nansen:api grants have API-key-equivalent account permissions, subject to enabled admission and the same endpoint restrictions. Internal service identity and wallet signing are not granted. Browser sessions cannot authorize wallet signing or be exported as MCP keys. Normal-release acceptance and a published cohort remain pending.

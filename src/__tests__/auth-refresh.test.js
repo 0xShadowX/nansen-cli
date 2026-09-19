@@ -10,6 +10,8 @@ import { resolveCredential, AuthError } from '../auth-credentials.js';
 import { getAuthStatus } from '../doctor.js';
 import { buildAgentCommands } from '../commands/agent.js';
 import { buildCommands } from '../cli.js';
+import { simulateAssetChanges } from '../swap-simulation.js';
+import { SIMULATION_RPCS } from '../rpc-urls.js';
 import { NansenAPI } from '../api.js';
 import { issuedFixture, sessionFixture, memoryOperation } from './fixtures/auth-fixture.js';
 const roots = [];
@@ -340,4 +342,66 @@ it('logout reports pointer/journal disagreement as state invalid and retains bot
   expect((await f.state.logout()).cleanup).toEqual([{ local: 'incomplete', remote: 'unconfirmed', code: 'AUTH_STATE_INVALID' }]);
   expect(json(f.file).auth.active.kind).toBe('none'); expect(fs.readFileSync(f.journal(), 'utf8')).toBe(journal);
   expect([...f.memory.entries.keys()]).toEqual(before); expect(f.retire).not.toHaveBeenCalled();
+});
+
+it.each(['nansen:read', '', undefined])('refuses refreshed JWT scope %s with durable no-replay and no fallback', async scope => {
+  const f = await fixture(); const next = issuedFixture(f.old.privateJwk, { now: f.now() });
+  const parts = next.accessToken.split('.'); const claims = JSON.parse(Buffer.from(parts[1], 'base64url')); claims.scope = scope;
+  parts[1] = Buffer.from(JSON.stringify(claims)).toString('base64url');
+  f.fetchFn.mockResolvedValue(response(200, { access_token: parts.join('.'), refresh_token: 'downgraded', token_type: 'Bearer', expires_in: 3600 }));
+  const resource = vi.fn(); vi.stubGlobal('fetch', resource);
+  const api = new NansenAPI(undefined, f.old.audience, { credential: f.selection, authState: f.state });
+  await expect(api.alertsCreate({ name: 'fixture' })).rejects.toMatchObject({ code: 'SESSION_RENEWAL_UNCERTAIN' });
+  await expect(api.getAccount()).rejects.toMatchObject({ code: 'SESSION_RENEWAL_UNCERTAIN' });
+  expect(f.fetchFn).toHaveBeenCalledOnce(); expect(resource).not.toHaveBeenCalled();
+  expect(json(f.file).auth.active.generation).toBe(f.selection.generation); expect(f.retire).not.toHaveBeenCalled();
+});
+it('rejects an explicit refresh response scope downgrade even with an api-scoped JWT', async () => {
+  const f = await fixture(); const next = issuedFixture(f.old.privateJwk, { now: f.now() });
+  f.fetchFn.mockResolvedValue(response(200, { access_token: next.accessToken, refresh_token: 'downgraded', token_type: 'Bearer', expires_in: 3600, scope: 'nansen:read' }));
+  await expect(f.acquire()).rejects.toMatchObject({ code: 'SESSION_RENEWAL_UNCERTAIN' });
+  expect(json(f.journal())).toMatchObject({ phase: 'blocked', reason: 'uncertain' });
+});
+it('renewed api scope reaches account, smart-alert CRUD and hosted simulation without extra authority', async () => {
+  const f = await fixture(); const api = new NansenAPI(undefined, f.old.audience, { credential: f.selection, authState: f.state });
+  const fetch = vi.fn(async url => url.includes('simulate-swap') ? response(200, { result: [{ calls: [{ status: '0x1', logs: [] }] }] }) : response(200, {})); vi.stubGlobal('fetch', fetch);
+  await api.getAccount(); await api.alertsList(); await api.alertsCreate({ name: 'fixture' }); await api.alertsUpdate({ id: 'fixture' }); await api.alertsDelete('fixture');
+  await simulateAssetChanges('base', { to: '0x2' }, { from: '0x1', api });
+  expect(f.fetchFn).toHaveBeenCalledOnce(); expect(fetch).toHaveBeenCalledTimes(6); expect(f.retire).not.toHaveBeenCalled();
+  for (const [, options] of fetch.mock.calls) {
+    expect(options.headers.Authorization).toBe(fetch.mock.calls[0][1].headers.Authorization);
+    expect(options.headers.Authorization).not.toBe(`Bearer ${f.old.accessToken}`);
+    expect(options.headers.apikey).toBeUndefined(); expect(options.headers['Payment-Signature']).toBeUndefined(); expect(options.redirect).toBe('error');
+    expect(JSON.stringify(options)).not.toContain(f.old.refreshToken); expect(JSON.stringify(options)).not.toContain(f.old.privateJwk.d);
+  }
+});
+it('hosted simulation reacquires after method fallback while foreign RPC never opens expired custody', async () => {
+  const f = await fixture(); vi.spyOn(Date, 'now').mockImplementation(f.now);
+  let rotations = 0;
+  f.fetchFn.mockImplementation(async () => {
+    const next = issuedFixture(f.old.privateJwk, { now: f.now() });
+    return response(200, { access_token: next.accessToken, refresh_token: `simulation-rotation-${++rotations}`, token_type: 'Bearer', expires_in: 3600 });
+  });
+  const api = new NansenAPI(undefined, f.old.audience, { credential: f.selection, authState: f.state });
+  const fetch = vi.fn(async (_url, options) => {
+    if (JSON.parse(options.body).method === 'eth_simulateV1') { f.advance(3601000); return response(200, { error: { code: -32601, message: 'method not found' } }); }
+    return response(200, { result: { type: 'CALL', logs: [], calls: [] } });
+  }); vi.stubGlobal('fetch', fetch);
+  await simulateAssetChanges('base', { to: '0x2' }, { from: '0x1', api });
+  expect(f.fetchFn).toHaveBeenCalledTimes(2); expect(fetch).toHaveBeenCalledTimes(2);
+  expect(fetch.mock.calls[0][1].headers.Authorization).not.toBe(fetch.mock.calls[1][1].headers.Authorization);
+  const acquire = vi.spyOn(f.state, 'acquireSession'); const original = SIMULATION_RPCS.base;
+  try {
+    SIMULATION_RPCS.base = 'https://foreign.invalid'; f.advance(3601000);
+    fetch.mockImplementation(async () => response(200, { result: [{ calls: [{ status: '0x1', logs: [] }] }] }));
+    await simulateAssetChanges('base', { to: '0x2' }, { from: '0x1', api });
+    expect(acquire).not.toHaveBeenCalled(); expect(fetch.mock.calls.at(-1)[1].headers).toEqual({ 'Content-Type': 'application/json' });
+  } finally { SIMULATION_RPCS.base = original; }
+});
+it.each(['nansen:read', undefined])('does not refresh or upgrade a saved %s grant', async scope => {
+  const f = await fixture(); const old = { ...f.old, scope }; const parts = old.accessToken.split('.');
+  const claims = JSON.parse(Buffer.from(parts[1], 'base64url')); claims.scope = scope; parts[1] = Buffer.from(JSON.stringify(claims)).toString('base64url'); old.accessToken = parts.join('.');
+  await f.store.write(f.selection.generation, old);
+  await expect(f.acquire()).rejects.toMatchObject({ code: 'INVALID_BROWSER_SESSION' });
+  expect(f.fetchFn).not.toHaveBeenCalled(); expect(f.retire).not.toHaveBeenCalled();
 });

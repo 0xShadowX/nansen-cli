@@ -7,13 +7,11 @@ import { createAuthState } from '../auth-state.js';
 import { createAuthStore } from '../auth-store.js';
 import { resolveCredential } from '../auth-credentials.js';
 import { memoryOperation, sessionFixture } from './fixtures/auth-fixture.js';
-import contract from './fixtures/api508-admitted-routes.json';
 import examples from './fixtures/api508-skill-commands.json';
 
 // Ancillary traffic is captured too; the resource transport below is real NansenAPI.request.
 vi.mock('../update-check.js', () => ({ getUpdateNotification: () => null, getUpgradeNotice: () => null, scheduleUpdateCheck: vi.fn() }));
 vi.mock('../cost-cache.js', () => ({ refreshCostMapIfStale: vi.fn(), getCostForEndpoint: () => null, creditsCharged: () => null }));
-const admitted = new Set(contract.routes.map(r => r.join(' ')));
 const skillDocs = Object.fromEntries(fs.readdirSync('skills').map(name => [name,
   ['SKILL.md', ...fs.readdirSync(`skills/${name}`).filter(f => f.endsWith('.md') && f !== 'SKILL.md')].map(f => fs.readFileSync(`skills/${name}/${f}`, 'utf8')).join('\n')]));
 // Parse the independent fields in the repository's block-YAML frontmatter.
@@ -23,51 +21,31 @@ function credentialMetadata(text) {
   const envBlock = required.match(/^ {6}env:\n((?: {8}- [^\n]+\n)*)/m)?.[1] || '';
   return { primaryEnv: frontmatter.match(/^ {4}primaryEnv: (.+)$/m)?.[1], requiredEnv: [...envBlock.matchAll(/- (\S+)/g)].map(m => m[1]) };
 }
-function supportsBrowserSkill(name, rows, docs) {
-  const commands = rows.filter(r => r.file.split('/')[1] === name);
-  // All reference files count. Non-research operations cannot be hidden behind
-  // one admitted data example (agent-guide is intentionally mixed).
-  const families = [...docs[name].matchAll(/\bnansen ([a-z][a-z-]*)/g)].map(m => m[1]);
-  return commands.length > 0 && commands.every(r => r.expectedRoutes.length > 0 && r.expectedRoutes.every(route => admitted.has(route))) &&
-    families.every(f => ['research', 'login', 'auth', 'account'].includes(f));
-}
-const browserFamilies = new Set(['research', 'login', 'auth', 'account']);
-const keyOnlyFamilies = new Set(['agent', 'alerts', 'trade', 'wallet', 'perp', 'web', 'doctor']);
+// Command families classify workflows, not server permissions. Unknown additions
+// require an explicit transport/authorization assessment, never a key-only fallback.
+const apiFamilies = new Set(['research', 'login', 'auth', 'account', 'agent', 'alerts', 'web']);
+const walletFamilies = new Set(['trade', 'wallet', 'perp', 'doctor']);
 function assertSkillScope(rows, docs) {
-  const groups = { conditional: [], keyOnly: [], standalonePayment: [] };
-  for (const row of rows) {
-    if (!Object.hasOwn(docs, row.file.split('/')[1])) throw new Error(`Unknown inventory skill: ${row.file}`);
-  }
+  const groups = { accountApi: [], walletWorkflow: [], standalonePayment: [] };
+  for (const row of rows) if (!Object.hasOwn(docs, row.file.split('/')[1])) throw new Error(`Unknown inventory skill: ${row.file}`);
   for (const [name, text] of Object.entries(docs)) {
-    const commands = rows.filter(r => r.file.split('/')[1] === name);
     const families = [...text.matchAll(/\bnansen ([a-z][a-z-]*)/g)].map(m => m[1]);
-    // One explicitly separate payment rail; never a general escape for untraced skills.
     if (name === 'nansen-mpp-payment') {
-      if (commands.length || families.some(f => f !== 'schema')) throw new Error(`Mixed standalone payment skill: ${name}`);
-      groups.standalonePayment.push(name);
-      continue;
+      if (families.some(f => f !== 'schema')) throw new Error(`Mixed standalone payment skill: ${name}`);
+      expect(text).toContain('tempo'); groups.standalonePayment.push(name); continue;
     }
-    if (families.some(f => !browserFamilies.has(f) && !keyOnlyFamilies.has(f))) throw new Error(`Unknown command family: ${name}`);
+    if (!families.length || families.some(f => !apiFamilies.has(f) && !walletFamilies.has(f))) throw new Error(`Untraced command family: ${name}`);
+    if (families.includes('research') && !rows.some(r => r.file.split('/')[1] === name) && !families.some(f => walletFamilies.has(f))) throw new Error(`Untraced research skill: ${name}`);
     const metadata = credentialMetadata(text);
-    if (supportsBrowserSkill(name, rows, docs)) {
-      expect(text).toContain('## Authentication');
-      expect(metadata.primaryEnv).toBe('NANSEN_API_KEY');
-      expect(metadata.requiredEnv).toEqual([]);
-      groups.conditional.push(name);
-    } else {
-      if (text.includes('## Authentication')) throw new Error(`Mixed or untraced browser skill: ${name}`);
-      const excluded = commands.some(r => r.expectedRoutes.some(route => !admitted.has(route))) || families.some(f => keyOnlyFamilies.has(f));
-      if (!excluded) throw new Error(`Untraced skill: ${name}`);
-      expect(metadata.requiredEnv, name).toContain('NANSEN_API_KEY');
-      expect(metadata.primaryEnv, name).toBe('NANSEN_API_KEY');
-      groups.keyOnly.push(name);
-    }
+    expect(metadata.primaryEnv, name).toBe('NANSEN_API_KEY');
+    expect(metadata.requiredEnv, name).toEqual([]);
+    expect(text).toContain('## Authentication'); expect(text).toContain('nansen:api');
+    expect(text).toContain('Browser rollout acceptance is still pending.');
+    groups[families.some(f => walletFamilies.has(f)) ? 'walletWorkflow' : 'accountApi'].push(name);
   }
   expect(Object.values(groups).flat().sort()).toEqual(Object.keys(docs).sort());
   return groups;
 }
-const conditional = Object.keys(skillDocs).filter(name => supportsBrowserSkill(name, examples, skillDocs));
-const excludedRoute = /\/(?:agent|portfolio|web|beta|v1beta1|internal|execution|wallet)(?:\/|$)|\/search\/web-(?:search|fetch)/;
 let state, selection, bundle;
 const unexpected = vi.fn(() => { throw new Error('Unexpected issuer/retirement request'); });
 beforeAll(async () => {
@@ -78,68 +56,47 @@ beforeAll(async () => {
   selection = resolveCredential();
 });
 afterAll(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
-class SessionAPI extends NansenAPI {
-  constructor(_key, _base, options) { super(undefined, bundle.audience, { ...options, credential: selection, authState: state, retry: { maxRetries: 0 } }); }
-}
 function assertComplete(result, calls, failures) {
   expect(result.code).toBe(0); expect(result.value?.type).toBe('success');
   expect(JSON.stringify(result.value?.data)).not.toMatch(/"error"\s*:/);
   expect(calls.length).toBeGreaterThan(0); expect(failures).toEqual([]);
 }
-async function dispatch(args, { fail = false, expand = false } = {}) {
+async function dispatch(args, { fail = false, expand = false, kind = 'session' } = {}) {
+  class SelectedAPI extends NansenAPI {
+    constructor() { super(kind === 'api-key' ? 'synthetic-key' : undefined, bundle.audience, { ...(kind === 'session' && { credential: selection, authState: state }), retry: { maxRetries: 0 } }); }
+  }
   const calls = [], failures = [], output = [];
   vi.stubGlobal('fetch', vi.fn(async (url, options) => {
     const endpoint = new URL(url).pathname;
     const route = `${options.method || 'GET'} ${endpoint}`;
     calls.push(route);
     expect(new URL(url).origin).toBe(bundle.audience);
-    expect(options.headers.Authorization).toBe(`Bearer ${bundle.accessToken}`);
-    expect(options.headers.apikey).toBeUndefined();
+    expect(options.headers.Authorization).toBe(kind === 'session' ? `Bearer ${bundle.accessToken}` : undefined);
+    expect(options.headers.apikey).toBe(kind === 'api-key' ? 'synthetic-key' : undefined);
     if (fail) { failures.push(route); return new Response(JSON.stringify({ error: 'synthetic failure' }), { status: 400 }); }
     const data = expand && endpoint.endsWith('/counterparties') ? [{ counterparty_address: '0x0000000000000000000000000000000000000003', volume_usd: 1 }] : [];
     return new Response(JSON.stringify({ data }));
   }));
   let code = 0;
-  const value = await runCLI(args, { NansenAPIClass: SessionAPI, isTTY: false, output: x => output.push(x), errorOutput: x => output.push(x), log: x => output.push(x), exit: x => { code = x; } });
+  const value = await runCLI(args, { NansenAPIClass: SelectedAPI, isTTY: false, output: x => output.push(x), errorOutput: x => output.push(x), log: x => output.push(x), exit: x => { code = x; } });
   for (const secret of [bundle.accessToken, bundle.refreshToken, bundle.privateJwk.d]) expect(JSON.stringify(output)).not.toContain(secret);
   expect(unexpected).not.toHaveBeenCalled();
   return { result: { code, value }, calls, failures };
 }
-describe('published skill commands against frozen API505 method/path contract', () => {
-  it('pins 58 unique routes and exactly 23 conditional / 10 key-only skills', () => {
-    expect(admitted.size).toBe(58); expect(conditional).toHaveLength(23);
-    const groups = assertSkillScope(examples, skillDocs);
-    expect(groups.keyOnly).toHaveLength(10);
-    expect(groups.standalonePayment).toEqual(['nansen-mpp-payment']);
-    for (const name of conditional) {
-      const text = fs.readFileSync(`skills/${name}/SKILL.md`, 'utf8');
-      const metadata = credentialMetadata(text);
-      expect(metadata.primaryEnv).toBe('NANSEN_API_KEY');
-      expect(metadata.requiredEnv).toEqual([]);
-      for (const prerequisite of ['Cached access-token expiry alone does not mean the session is unusable', 'already-authorized research task, without another consent request or a separate account check', 'Stop on anonymous selection, invalid authentication state, blocked or uncertain renewal/cleanup', 'rejected or expired refresh authority', 'Do not run this research workflow anonymously.']) expect(text).toContain(prerequisite);
-      expect(text).toContain('Browser rollout acceptance is still pending.');
-    }
+describe('published skill commands and account permission parity', () => {
+  it('classifies every shipped workflow without an API-key-only eligibility gate', () => {
+    assertSkillScope(examples, skillDocs);
+    for (const text of Object.values(skillDocs)) expect(text).not.toContain('Fresh browser login does not grant agent access');
   });
-  it('rejects a mixed-scope skill even when an admitted example and optional key mapping remain', () => {
-    const name = 'nansen-wallet-deep-dive';
-    const excluded = { file: `skills/${name}/SKILL.md`, example: 'nansen research portfolio defi --wallet $ADDR', expectedRoutes: ['POST /api/v1/portfolio/defi-holdings'], admitted: false };
-    const docs = { ...skillDocs, [name]: skillDocs[name] + '\nnansen research portfolio defi --wallet $ADDR\n' };
-    expect(credentialMetadata(docs[name])).toEqual({ primaryEnv: 'NANSEN_API_KEY', requiredEnv: [] });
-    expect(() => assertSkillScope([...examples, excluded], docs)).toThrow(`Mixed or untraced browser skill: ${name}`);
-    expect(() => assertSkillScope(examples, { ...skillDocs, [name]: skillDocs[name] + '\nnansen agent "interpret"\n' })).toThrow(`Mixed or untraced browser skill: ${name}`);
+  it.each(['wallet create', 'trade quote', 'agent "interpret"'])('rejects an unclassified new workflow: %s', command => {
+    expect(() => assertSkillScope(examples, { ...skillDocs, 'nansen-new': `Run nansen ${command}` })).toThrow();
+  });
+  it('rejects untraced research, unknown families and mandatory-key metadata', () => {
+    for (const text of ['No commands', 'nansen research token info', 'nansen future-command']) expect(() => assertSkillScope(examples, { ...skillDocs, 'new': text })).toThrow();
+    const name = 'nansen-wallet-profiler';
     const required = skillDocs[name].replace('    requires:\n', '    requires:\n      env:\n        - NANSEN_API_KEY\n');
     expect(credentialMetadata(required)).toEqual({ primaryEnv: 'NANSEN_API_KEY', requiredEnv: ['NANSEN_API_KEY'] });
     expect(() => assertSkillScope(examples, { ...skillDocs, [name]: required })).toThrow();
-  });
-  it.each(['wallet create', 'trade quote', 'agent "interpret"'])('rejects an unlisted key-only skill without metadata: %s', command => {
-    const name = 'nansen-new-skill';
-    const text = `---\nname: ${name}\n---\nRun nansen ${command}\n`;
-    expect(() => assertSkillScope(examples, { ...skillDocs, [name]: text })).toThrow();
-    const withMetadata = text.replace('\n---\nRun', '\nmetadata:\n  openclaw:\n    requires:\n      env:\n        - NANSEN_API_KEY\n    primaryEnv: NANSEN_API_KEY\n---\nRun');
-    expect(assertSkillScope(examples, { ...skillDocs, [name]: withMetadata }).keyOnly).toContain(name);
-  });
-  it.each(['No executable command documented.', 'Run nansen research token info', 'Run nansen future-command'])('refuses untraced or unknown new skills: %s', text => {
-    expect(() => assertSkillScope(examples, { ...skillDocs, 'nansen-untraced': text })).toThrow();
   });
   it('inventories every literal research example, including embedded scripts and reference files', () => {
     const actual = [];
@@ -161,10 +118,11 @@ describe('published skill commands against frozen API505 method/path contract', 
     expect(actual.sort((a,b) => JSON.stringify(a).localeCompare(JSON.stringify(b)))).toEqual(examples.map(({file,example}) => ({file,example})).sort((a,b) => JSON.stringify(a).localeCompare(JSON.stringify(b))));
   });
   it.each(examples)('$file: $example', async row => {
-    const { result, calls, failures } = await dispatch(row.args);
-    assertComplete(result, calls, failures);
-    expect([...new Set(calls)].sort()).toEqual(row.expectedRoutes);
-    expect(calls.every(r => admitted.has(r))).toBe(row.admitted);
+    for (const kind of ['api-key', 'session']) {
+      const { result, calls, failures } = await dispatch(row.args, { kind });
+      assertComplete(result, calls, failures);
+      expect([...new Set(calls)].sort()).toEqual(row.expectedRoutes);
+    }
   });
   it.each([
     ['skills/nansen-sm-cross-chain-flows/SKILL.md', ['ethereum','solana','base','bnb']],
@@ -177,7 +135,7 @@ describe('published skill commands against frozen API505 method/path contract', 
     for (const chain of chains) {
       const args = [...row.args]; args[args.indexOf('--chain') + 1] = chain;
       const { result, calls, failures } = await dispatch(args);
-      assertComplete(result, calls, failures); expect(calls.every(r => admitted.has(r))).toBe(true);
+      assertComplete(result, calls, failures); expect([...new Set(calls)].sort()).toEqual(row.expectedRoutes);
     }
   });
   it('traverses a nonempty trace and refuses to treat partial composite results as acceptance', async () => {
@@ -193,11 +151,6 @@ describe('published skill commands against frozen API505 method/path contract', 
     const unknown = await dispatch(['research','token','not-a-command']);
     expect(() => assertComplete(unknown.result, unknown.calls, unknown.failures)).toThrow();
   });
-  it('keeps excluded route families out of the admitted fixture', () => {
-    for (const route of admitted) expect(route).not.toMatch(excludedRoute);
-    expect('POST /api/v1beta1/tgm/historical-dex-trades').toMatch(excludedRoute);
-    expect('POST /api/v1/search/web-search').toMatch(excludedRoute);
-  });
   it('renders login, account, auth and schema guidance through public commands', async () => {
     const output = [];
     for (const args of [['--help'],['login','--help'],['auth','--help'],['account','--help'],['schema']]) {
@@ -206,7 +159,9 @@ describe('published skill commands against frozen API505 method/path contract', 
     }
     const text = output.map(x => typeof x === 'string' ? x : JSON.stringify(x)).join('\n');
     for (const phrase of ['NANSEN_API_KEY','--no-browser','--human','unverified','402']) expect(text).toContain(phrase);
-    expect(SCHEMA.commands.login.description).toContain('fresh');
-    expect(SCHEMA.commands.research.description).toContain('stable-v1 direct-data');
+    expect(text).not.toContain('Only admitted direct-data research');
+    expect(text).not.toContain('agent, portfolio, web and execution are excluded');
+    expect(SCHEMA.commands.login.description.toLowerCase()).toContain('fresh');
+    expect(SCHEMA.commands.research.description).toContain('same account API permissions');
   });
 });
