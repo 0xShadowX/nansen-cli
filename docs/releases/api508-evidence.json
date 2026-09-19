@@ -67,6 +67,62 @@
       "sourceHead": "83d6f5d1e851e9da1f46902e3df93dd523bddedd",
       "kind": "one-host absolute native read cost",
       "limits": "11416-byte bundle; reads1/4/16 took798/2956/11764ms. Not before/after latency evidence."
+    },
+    {
+      "artifact": "API-507-root-8f9085b-native-verification.md",
+      "sha256": "7a4d26c6de10b1407c29da313058306a1c38b83cdad6580640b59661e4bb5389",
+      "sourceHead": "8f9085b8035291a40babd7cea48252cb26333d64",
+      "kind": "root native verification",
+      "limits": "51 renewal tests and actual Mac/Linux native runs, synthetic issuer/retirement; frozen dependency only, not candidate/package or live ceremony."
+    },
+    {
+      "artifact": "api507-native-renewal-8f9085b-result.json",
+      "sha256": "642dddcdcff0f5840d984caee2757f8e3144e3d91501ed676f413668f9554f5f",
+      "sourceHead": "8f9085b8035291a40babd7cea48252cb26333d64",
+      "kind": "macOS native renewal",
+      "limits": "10295-byte bundle, one rotation, fresh-process read, logout retirement stub/cleanup. No live issuer/gateway/ledger, power loss, OS login or daemon cancellation."
+    },
+    {
+      "artifact": "linux-native-refresh-8f9085b-result.json",
+      "sha256": "4cf049d86077710033f21a1b64c0289e1f510567146de27b7e3dd5ec2ef60fcb",
+      "sourceHead": "8f9085b8035291a40babd7cea48252cb26333d64",
+      "kind": "isolated Debian/GNOME native renewal",
+      "limits": "10295-byte bundle, one rotation, locked refusal80ms, restart/read/cleanup. Actual native storage with synthetic issuer/retirement. No desktop prompts, Windows, OS login/PAM/reboot or daemon cancellation."
+    },
+    {
+      "artifact": "API-507-root-joint-refresh-verification.md",
+      "sha256": "17386f546aed69411ad768f60b215cf790628c118c39510868d327c889c88815",
+      "sourceHead": "8f9085b8035291a40babd7cea48252cb26333d64",
+      "kind": "root joint integration",
+      "limits": "11 CLI8f/API9190 cases with controlled storage/gateway and synthetic billing/issuer. Original proof checked DPoP metadata only; subsequent signature artifact is separate."
+    },
+    {
+      "artifact": "joint-cli-refresh-api-9190-8f9085b-result.json",
+      "sha256": "ed7b4d5248dd5b8c5f3b35a6160f7d5b16106adeddea30f61ada3f79d40b5b04",
+      "sourceHead": "8f9085b8035291a40babd7cea48252cb26333d64",
+      "kind": "synthetic public command integration",
+      "limits": "11 cases; one rotation across fresh processes, inactive B not refreshed under env A, free zero-credit B after rotation. No live issuer, native store, gateway or ledger."
+    },
+    {
+      "artifact": "API-507-root-dpop-signature-verification.md",
+      "sha256": "09ec4543239696edaae257956f734051a25dc7cab98615ab9ab682b9b1373e3d",
+      "sourceHead": "8f9085b8035291a40babd7cea48252cb26333d64",
+      "kind": "root cryptographic proof verification",
+      "limits": "11 cases independently verify original-key ES256 DPoP and reject signature tampering. Synthetic issuer/storage/gateway; no deployed verifier or staging acceptance."
+    },
+    {
+      "artifact": "joint-cli-refresh-api-9190-8f9085b-dpop-result.json",
+      "sha256": "f04e4a4301f7309c62b3812894487b44470bad12ce1cef1fc94fe04e263a3664",
+      "sourceHead": "8f9085b8035291a40babd7cea48252cb26333d64",
+      "kind": "synthetic public command integration with DPoP verification",
+      "limits": "11 cases pass; both nonce proofs cryptographically verified, tampering rejected, one rotation. CLI8f/API9190 only; no native custody/live issuer/gateway/ledger claim."
+    },
+    {
+      "artifact": "API-508-root-d59c242-verification.md",
+      "sha256": "6a22887316627b8b5c4aa7c447c9f33b489a7389e3e84b955edb8b89e1ec6058",
+      "sourceHead": "d59c2420b24e4e93d819c3f983cbade6f2af0c1b",
+      "kind": "root onboarding verification",
+      "limits": "158 focused tests and eight original artifact hashes checked; not this repair head or release acceptance."
     }
   ],
   "candidate": {
@@ -101,7 +157,9 @@
     "rollbackDrill": null,
     "operatorDecision": null,
     "deniedLoadSingleAndMultiAccount": null,
-    "latencyDecisionAndThresholds": null
+    "latencyDecisionAndThresholds": null,
+    "fullSessionAccessTokenInvalidation": null,
+    "measuredRevocationPropagationAndDurability": null
   },
   "rollback": {
     "v2CompatiblePublishedRecoveryVersion": null,
@@ -114,5 +172,20 @@
     "distTagSnapshot": null,
     "clawhubSnapshot": null,
     "operatorCommandRecord": null
+  },
+  "frozenDependencyVerification": {
+    "sourceHead": "8f9085b8035291a40babd7cea48252cb26333d64",
+    "nativeRenewal": [
+      "api507-native-renewal-8f9085b-result.json",
+      "linux-native-refresh-8f9085b-result.json"
+    ],
+    "jointWithDpop": "joint-cli-refresh-api-9190-8f9085b-dpop-result.json",
+    "pendingRepairedDependency": null,
+    "limits": "Current repair stays on frozen8f. Root will supply a later repaired API507 head for reconciliation before reviewer B. Requires rerun or bounded source equivalence then; final candidate/package native gate remains null."
+  },
+  "acceptanceNotes": {
+    "exactHeadNativeRenewal": "Final candidate/package proof, not frozen dependency proof. See frozenDependencyVerification for completed8f evidence.",
+    "fullSessionAccessTokenInvalidation": "Required before rollout: actual logout invalidates original, rotated and copied tokens for that session; other sessions/accounts/API keys unaffected. Refresh-only retirement or natural expiry does not satisfy this gate.",
+    "measuredRevocationPropagationAndDurability": "Deployed issuer/gateway/API observed rejection, measured propagation, restart/outage fail-closed behavior and durable retained feed/anchors; recorded/pending receipt is not observed rejection."
   }
 }

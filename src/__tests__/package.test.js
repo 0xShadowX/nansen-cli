@@ -6,10 +6,11 @@
  */
 
 import { describe, it, expect, afterAll } from 'vitest';
-import { execSync, execFileSync } from 'child_process';
-import { mkdtempSync, rmSync, existsSync, writeFileSync, readFileSync } from 'fs';
+import { execSync, execFileSync, spawnSync } from 'child_process';
+import { mkdtempSync, rmSync, existsSync, writeFileSync, readFileSync, symlinkSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
+import { pathToFileURL } from 'url';
 
 describe('Package Integrity', () => {
   const tmpDirs = [];
@@ -27,6 +28,11 @@ describe('Package Integrity', () => {
     const tmpDir = mkdtempSync(join(tmpdir(), 'nansen-pack-test-'));
     tmpDirs.push(tmpDir);
 
+    // Every child (including background update checks) inherits a local-only transport.
+    const capture = join(tmpDir, 'capture.mjs');
+    writeFileSync(capture, `globalThis.fetch = async () => { process.stderr.write('LOCAL_FETCH_CAPTURE\\n'); return new Response(JSON.stringify({data: []})); };`);
+    const childEnv = { ...process.env, NODE_OPTIONS: `${process.env.NODE_OPTIONS || ''} --import=${capture}`, DO_NOT_TRACK: '1', NANSEN_NO_TELEMETRY: '1' };
+
     // Pack from repo root
     const packOutput = execSync('npm pack --json', {
       encoding: 'utf-8',
@@ -40,17 +46,40 @@ describe('Package Integrity', () => {
     // vulnerability check: that network call has been hanging indefinitely
     // (not just slow) rather than failing, so nothing short of avoiding it
     // keeps this test from hanging the whole CI job.
-    execSync('npm init -y', { cwd: tmpDir, stdio: 'ignore' });
-    execSync(`npm install --omit=optional --no-audit --no-fund "${tgzPath}"`, { cwd: tmpDir, stdio: 'ignore' });
+    execSync('npm init -y', { cwd: tmpDir, stdio: 'ignore', env: childEnv });
+    execSync(`npm install --omit=optional --no-audit --no-fund "${tgzPath}"`, { cwd: tmpDir, stdio: 'ignore', env: childEnv });
 
-    // Every child (including background update checks) inherits a local-only transport.
-    const capture = join(tmpDir, 'capture.mjs');
-    writeFileSync(capture, `globalThis.fetch = async () => new Response(JSON.stringify({data: []}));`);
-    const childEnv = { ...process.env, NODE_OPTIONS: `${process.env.NODE_OPTIONS || ''} --import=${capture}`, DO_NOT_TRACK: '1', NANSEN_NO_TELEMETRY: '1' };
     const packageRoot = join(tmpDir, 'node_modules/nansen-cli');
     const result = execFileSync(process.execPath, [join(packageRoot, 'src/index.js'), '--help'], { cwd: tmpDir, encoding: 'utf8', env: childEnv });
-    const onboarding = execFileSync(process.execPath, [join(packageRoot, 'scripts/postinstall.js')], { cwd: tmpDir, encoding: 'utf8', env: { ...childEnv, npm_config_global: 'true' }, stdio: ['pipe', 'pipe', 'pipe'] });
-    expect(onboarding).toBe('');
+    const postinstall = join(packageRoot, 'scripts/postinstall.js');
+    const linkedRoot = join(tmpDir, 'linked-package');
+    symlinkSync(packageRoot, linkedRoot, process.platform === 'win32' ? 'junction' : 'dir');
+    const invoke = (args, env = {}) => spawnSync(process.execPath, args, { cwd: tmpDir, encoding: 'utf8', env: { ...childEnv, npm_lifecycle_event: 'postinstall', npm_config_global: 'true', ...env } });
+    for (const entry of [postinstall, join(linkedRoot, 'scripts/postinstall.js')]) {
+      const onboarding = invoke([entry]);
+      expect(onboarding.status).toBe(0); expect(onboarding.stdout).toBe('');
+      expect(onboarding.stderr).toContain('Nansen CLI installed!');
+      expect(onboarding.stderr).toContain('nansen login');
+      expect(onboarding.stderr).toContain('NANSEN_API_KEY');
+      expect(onboarding.stderr).not.toContain('LOCAL_FETCH_CAPTURE');
+      const local = invoke([entry], { npm_config_global: 'false' });
+      expect(local.status).toBe(0); expect(local.stdout).toBe(''); expect(local.stderr).toBe('');
+    }
+    const importer = join(tmpDir, 'import-postinstall.mjs');
+    writeFileSync(importer, `await import(${JSON.stringify(pathToFileURL(postinstall).href)});`);
+    for (const args of [[importer], ['--input-type=module', '-e', `process.argv[1] = 'missing-entry.js'; await import(${JSON.stringify(pathToFileURL(postinstall).href)});`]]) {
+      const imported = invoke(args);
+      expect(imported.status).toBe(0); expect(imported.stdout).toBe(''); expect(imported.stderr).toBe('');
+    }
+    // Exercise the real entry's failure boundary without opening a terminal or network.
+    mkdirSync(join(process.env.HOME, '.claude/skills/nansen-cli'), { recursive: true });
+    const brokenPrompt = join(tmpDir, 'broken-prompt.mjs');
+    writeFileSync(brokenPrompt, `import readline from 'node:readline'; import { syncBuiltinESMExports } from 'node:module';
+      Object.defineProperty(process.stdin, 'isTTY', {value:true}); Object.defineProperty(process.stderr, 'isTTY', {value:true});
+      readline.createInterface = () => { throw new Error('synthetic-onboarding-failure'); }; syncBuiltinESMExports();`);
+    const failed = invoke(['--import', brokenPrompt, postinstall], { NANSEN_API_KEY: 'synthetic-key' });
+    expect(failed.status).toBe(0); expect(failed.stdout).toBe('');
+    expect(failed.stderr).toContain('API key is configured'); expect(failed.stderr).not.toContain('synthetic-onboarding-failure');
     const recovery = readFileSync(join(packageRoot, 'docs/browser-login.md'), 'utf8');
     expect(recovery).toContain('## Offline recovery without native locking');
     expect(recovery).toContain('v2');
@@ -65,11 +94,11 @@ describe('Package Integrity', () => {
     const stateModule = join(tmpDir, 'node_modules/nansen-cli/src/auth-state.js');
     const smoke = execFileSync(process.execPath, ['--input-type=module', '-e', `
       import { pathToFileURL } from 'node:url';
-      const { NansenAPI } = await import(pathToFileURL(${JSON.stringify(apiModule)}));
       globalThis.fetch = async (_url, options) => {
         if (options.headers.apikey !== 'synthetic-key') throw new Error('wrong credential');
         return new Response(JSON.stringify({user_id:'synthetic'}));
       };
+      const { NansenAPI } = await import(pathToFileURL(${JSON.stringify(apiModule)}));
       await new NansenAPI('synthetic-key').getAccount();
       const { createAuthState } = await import(pathToFileURL(${JSON.stringify(stateModule)}));
       try { await createAuthState({directory:${JSON.stringify(join(tmpDir, 'auth'))}}).begin(); throw new Error('unexpected native availability'); }

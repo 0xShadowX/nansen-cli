@@ -13,9 +13,9 @@
 
 import { createInterface } from "readline";
 import { execFileSync, spawn } from "child_process";
-import { existsSync } from "fs";
+import { existsSync, realpathSync } from "fs";
 import { join, dirname } from "path";
-import { fileURLToPath, pathToFileURL } from "url";
+import { fileURLToPath } from "url";
 import { resolveCredential, assertUsableSelection } from "../src/auth-credentials.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -184,8 +184,12 @@ export async function main() {
   log();
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main().catch(() => {
-    // Never fail installation due to onboarding errors
-  });
+// Node resolves the module URL through symlinks, but argv may retain them.
+// An unavailable entry path or onboarding failure must never fail installation.
+try {
+  if (process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) {
+    main().catch(() => {});
+  }
+} catch {
+  // Importing with a missing/non-file argv entry remains silent.
 }

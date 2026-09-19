@@ -6,6 +6,7 @@ metadata:
     requires:
       bins:
         - nansen
+    primaryEnv: NANSEN_API_KEY
     install:
       - kind: node
         package: nansen-cli
@@ -14,7 +15,11 @@ allowed-tools: Bash(nansen:*)
 ---
 ## Authentication
 
-Use a saved browser session from `nansen login` when browser admission and the documented platform cohort are enabled, or use a conventional API key. `NANSEN_API_KEY` overrides the saved session. The direct-data commands below use normal credits and entitlements; login does not purchase credits. Browser rollout acceptance is still pending.
+Before any research command or loop, require an explicitly selected usable API key or saved browser session. Run `nansen auth status` first. Its cached/unverified metadata does not prove credential validity or unlocked storage. Stop research on anonymous, invalid, expired, uncertain or failed authentication. If verification or renewal is needed, ask the user to request the free `nansen account` check explicitly; continue only after it succeeds. Do not unset a failed key, erase a session or switch to anonymous access to retry.
+
+Use `nansen login` for fresh browser approval when server admission and the supported platform cohort are enabled, or configure a conventional API key. `NANSEN_API_KEY` overrides the saved session. OpenClaw's optional `primaryEnv` mapping preserves configured API-key injection; it is not a required-key gate or proof of authentication. Normal credits and entitlements apply. Login does not purchase credits. Browser rollout acceptance is still pending.
+
+Anonymous x402 is a separate paid workflow: without a selected credential, the CLI can automatically spend funds from its configured wallet on a supported 402 challenge, once per call, including calls in loops. Do not run this research workflow anonymously. Anonymous payment requires separate explicit user intent and payment setup; it is never a fallback for failed authentication.
 
 ```bash
 TOKEN_SYMBOL=<symbol e.g. "AAVE"> CHAINS=(ethereum solana base bnb)

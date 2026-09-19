@@ -14,8 +14,35 @@ import examples from './fixtures/api508-skill-commands.json';
 vi.mock('../update-check.js', () => ({ getUpdateNotification: () => null, getUpgradeNotice: () => null, scheduleUpdateCheck: vi.fn() }));
 vi.mock('../cost-cache.js', () => ({ refreshCostMapIfStale: vi.fn(), getCostForEndpoint: () => null, creditsCharged: () => null }));
 const admitted = new Set(contract.routes.map(r => r.join(' ')));
-const conditional = [...new Set(examples.filter(r => r.admitted && !r.file.includes('agent-guide') && !r.file.includes('defi-positions')).map(r => r.file.split('/')[1]))];
+const skillDocs = Object.fromEntries(fs.readdirSync('skills').map(name => [name,
+  ['SKILL.md', ...fs.readdirSync(`skills/${name}`).filter(f => f.endsWith('.md') && f !== 'SKILL.md')].map(f => fs.readFileSync(`skills/${name}/${f}`, 'utf8')).join('\n')]));
+// Parse the independent fields in the repository's block-YAML frontmatter.
+function credentialMetadata(text) {
+  const frontmatter = text.split('---')[1];
+  const required = frontmatter.match(/^ {4}requires:\n((?:(?: {6,}[^\n]*|)\n)*)/m)?.[1] || '';
+  const envBlock = required.match(/^ {6}env:\n((?: {8}- [^\n]+\n)*)/m)?.[1] || '';
+  return { primaryEnv: frontmatter.match(/^ {4}primaryEnv: (.+)$/m)?.[1], requiredEnv: [...envBlock.matchAll(/- (\S+)/g)].map(m => m[1]) };
+}
+function supportsBrowserSkill(name, rows, docs) {
+  const commands = rows.filter(r => r.file.split('/')[1] === name);
+  // All reference files count. Non-research operations cannot be hidden behind
+  // one admitted data example (agent-guide is intentionally mixed).
+  const families = [...docs[name].matchAll(/\bnansen ([a-z][a-z-]*)/g)].map(m => m[1]);
+  return commands.length > 0 && commands.every(r => r.expectedRoutes.length > 0 && r.expectedRoutes.every(route => admitted.has(route))) &&
+    families.every(f => ['research', 'login', 'auth', 'account'].includes(f));
+}
+function assertSkillScope(rows, docs) {
+  for (const [name, text] of Object.entries(docs)) {
+    if (!text.includes('## Authentication')) continue;
+    if (!supportsBrowserSkill(name, rows, docs)) throw new Error(`Mixed or untraced browser skill: ${name}`);
+    const metadata = credentialMetadata(text);
+    expect(metadata.primaryEnv).toBe('NANSEN_API_KEY');
+    expect(metadata.requiredEnv).toEqual([]);
+  }
+}
+const conditional = Object.keys(skillDocs).filter(name => supportsBrowserSkill(name, examples, skillDocs));
 const keyOnly = ['agent-guide', 'defi-positions', 'web-searcher', 'web-fetcher', 'smart-alerts', 'alerts-webhook-listener', 'trading', 'limit-orders', 'wallet-manager', 'wallet-keychain-migration'];
+const excludedRoute = /\/(?:agent|portfolio|web|beta|v1beta1|internal|execution|wallet)(?:\/|$)|\/search\/web-(?:search|fetch)/;
 let state, selection, bundle;
 const unexpected = vi.fn(() => { throw new Error('Unexpected issuer/retirement request'); });
 beforeAll(async () => {
@@ -56,13 +83,27 @@ async function dispatch(args, { fail = false, expand = false } = {}) {
 describe('published skill commands against frozen API505 method/path contract', () => {
   it('pins 58 unique routes and exactly 23 conditional / 10 key-only skills', () => {
     expect(admitted.size).toBe(58); expect(conditional).toHaveLength(23);
+    assertSkillScope(examples, skillDocs);
     for (const name of conditional) {
       const text = fs.readFileSync(`skills/${name}/SKILL.md`, 'utf8');
-      const metadata = text.split('---')[1];
-      expect(metadata).not.toContain('NANSEN_API_KEY');
+      const metadata = credentialMetadata(text);
+      expect(metadata.primaryEnv).toBe('NANSEN_API_KEY');
+      expect(metadata.requiredEnv).toEqual([]);
+      for (const prerequisite of ['Stop research on anonymous, invalid, expired, uncertain or failed authentication.', 'Do not run this research workflow anonymously.', 'ask the user to request the free `nansen account` check explicitly']) expect(text).toContain(prerequisite);
       expect(text).toContain('Browser rollout acceptance is still pending.');
     }
-    for (const name of keyOnly) expect(fs.readFileSync(`skills/nansen-${name}/SKILL.md`, 'utf8').split('---')[1]).toContain('NANSEN_API_KEY');
+    for (const name of keyOnly) expect(credentialMetadata(fs.readFileSync(`skills/nansen-${name}/SKILL.md`, 'utf8')).requiredEnv).toContain('NANSEN_API_KEY');
+  });
+  it('rejects a mixed-scope skill even when an admitted example and optional key mapping remain', () => {
+    const name = 'nansen-wallet-deep-dive';
+    const excluded = { file: `skills/${name}/SKILL.md`, example: 'nansen research portfolio defi --wallet $ADDR', expectedRoutes: ['POST /api/v1/portfolio/defi-holdings'], admitted: false };
+    const docs = { ...skillDocs, [name]: skillDocs[name] + '\nnansen research portfolio defi --wallet $ADDR\n' };
+    expect(credentialMetadata(docs[name])).toEqual({ primaryEnv: 'NANSEN_API_KEY', requiredEnv: [] });
+    expect(() => assertSkillScope([...examples, excluded], docs)).toThrow(`Mixed or untraced browser skill: ${name}`);
+    expect(() => assertSkillScope(examples, { ...skillDocs, [name]: skillDocs[name] + '\nnansen agent "interpret"\n' })).toThrow(`Mixed or untraced browser skill: ${name}`);
+    const required = skillDocs[name].replace('    requires:\n', '    requires:\n      env:\n        - NANSEN_API_KEY\n');
+    expect(credentialMetadata(required)).toEqual({ primaryEnv: 'NANSEN_API_KEY', requiredEnv: ['NANSEN_API_KEY'] });
+    expect(() => assertSkillScope(examples, { ...skillDocs, [name]: required })).toThrow();
   });
   it('inventories every literal research example, including embedded scripts and reference files', () => {
     const actual = [];
@@ -117,7 +158,9 @@ describe('published skill commands against frozen API505 method/path contract', 
     expect(() => assertComplete(unknown.result, unknown.calls, unknown.failures)).toThrow();
   });
   it('keeps excluded route families out of the admitted fixture', () => {
-    for (const route of admitted) expect(route).not.toMatch(/\/agent\/|\/portfolio\/|\/web\/|\/beta\/|\/internal\/|\/execution\/|\/wallet\//);
+    for (const route of admitted) expect(route).not.toMatch(excludedRoute);
+    expect('POST /api/v1beta1/tgm/historical-dex-trades').toMatch(excludedRoute);
+    expect('POST /api/v1/search/web-search').toMatch(excludedRoute);
   });
   it('renders login, account, auth and schema guidance through public commands', async () => {
     const output = [];
