@@ -245,3 +245,5 @@ nansen perp account     # account value, unrealized PnL, margin used, withdrawab
 
 - npm: https://www.npmjs.com/package/nansen-cli
 - GitHub: https://github.com/nansen-ai/nansen-cli
+
+Browser login uses `nansen:api` with the same account API permissions as an API key, subject to existing plan/account/endpoint checks. Trading still requires a separately configured wallet and its signing authorization. Hosted simulation uses the selected credential only on the matching trusted Nansen API origin; arbitrary RPC endpoints never receive Nansen credentials.

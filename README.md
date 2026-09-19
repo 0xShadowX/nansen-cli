@@ -77,13 +77,15 @@ Run `nansen schema --pretty` for the full subcommand and field reference.
 
 ## Browser login prerelease
 
+Browser login requests `nansen:api` for API-key-equivalent account API permissions, including smart-alert CRUD and trade API calls, under the same plan/account/endpoint checks. Existing OAuth/MCP `nansen:read` grants remain read-only. Wallet signing requires a separately configured wallet.
+
 The API506 draft changes plain `nansen login` to fresh browser approval. It preflights secure storage, shows a link/code, verifies the approved account through the free account endpoint, then replaces the single saved API credential. `nansen login --no-browser` runs the same flow in a remote terminal. Non-TTY login and `--json` emit NDJSON pending and terminal events; the private device code and tokens are never printed.
 
 `NANSEN_API_KEY` still overrides the saved session. Login verifies the new account independently and explains this override. Failed approval or installation preserves the previous selection. `nansen auth status` is offline and labels saved metadata as cached/unverified; `nansen account` checks the effective credential live. `nansen logout` removes saved API authentication and attempts family retirement, preserving wallets and environment keys. Remote revocation and physical deletion failures are reported separately.
 
 This is a breaking change for scripts that used plain login to persist an environment key. Use explicit `nansen login --human` with that environment key, or `--api-key <key>` with its existing shell-history risk. Direct key-authenticated commands need no migration. Automatic wallet payment now requires anonymous access: even a valid selected API key returning 402 will not automatically buy credits or sign a payment. Top up the selected account or explicitly supply `--x402-payment-signature`. Selected invalid credentials never cause an account switch; intended anonymous payments and explicit manual API-key payments retain their behavior.
 
-This draft is for a controlled prerelease cohort, not normal-release promotion. Selected browser sessions renew automatically near expiry. A lost refresh response without a complete stored replacement requires fresh login; the consumed credential is never retried. Public research billing, staging acceptance and OS verification remain gates. Read [browser login custody, compatibility and release gates](docs/browser-login.md) before cohort use. Browser sessions do not add wallet-signing authority and cannot be exported as MCP API keys.
+This draft is for a controlled prerelease cohort, not normal-release promotion. Selected browser sessions renew automatically near expiry. A lost refresh response without a complete stored replacement requires fresh login; the consumed credential is never retried. Cross-service account-permission parity, staging acceptance and OS verification remain gates. Read [browser login custody, compatibility and release gates](docs/browser-login.md) before cohort use. Browser sessions do not add wallet-signing authority and cannot be exported as MCP API keys. MCP installation separately provisions a persistent integration key; it does not restrict browser-session account API permissions.
 
 ## MCP
 

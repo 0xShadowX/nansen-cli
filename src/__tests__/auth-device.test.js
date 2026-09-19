@@ -35,12 +35,12 @@ describe('device contract', () => {
       expect(payload.nonce).toBe(`nonce-${requests.length - 1}`);
       const headers = { 'DPoP-Nonce': `nonce-${requests.length}` };
       if (url.endsWith('/authorize')) {
-        expect(JSON.parse(options.body)).toEqual({ audience: 'https://api.nansen.ai', scope: 'nansen:read', client_label: 'nansen CLI' });
+        expect(JSON.parse(options.body)).toEqual({ audience: 'https://api.nansen.ai', scope: 'nansen:api', client_label: 'nansen CLI' });
         return response(200, grant(), headers);
       }
       if (++polls <= 2) return response(400, { error: 'slow_down' }, headers);
       const bundle = issuedFixture(client.privateJwk, { now });
-      return response(200, { access_token: bundle.accessToken, refresh_token: bundle.refreshToken, token_type: 'Bearer', scope: 'nansen:read', expires_in: 3600 }, headers);
+      return response(200, { access_token: bundle.accessToken, refresh_token: bundle.refreshToken, token_type: 'Bearer', scope: 'nansen:api', expires_in: 3600 }, headers);
     });
     const client = createDeviceClient({ audience: 'https://api.nansen.ai', fetchFn, now: () => now });
     const events = [];
@@ -102,7 +102,7 @@ it('names cohort setup gates without inferring their actual server values', () =
 });
 it.each(['not-a-jwt', 'e30.e30.signature'])('reports malformed issued expiry as a token-response failure (%s)', async access_token => {
   const onIssued = vi.fn();
-  const fetchFn = vi.fn().mockResolvedValueOnce(response(200, grant())).mockResolvedValueOnce(response(200, { access_token, refresh_token: 'synthetic-cleanup-authority', token_type: 'Bearer', scope: 'nansen:read', expires_in: 3600 }));
+  const fetchFn = vi.fn().mockResolvedValueOnce(response(200, grant())).mockResolvedValueOnce(response(200, { access_token, refresh_token: 'synthetic-cleanup-authority', token_type: 'Bearer', scope: 'nansen:api', expires_in: 3600 }));
   await expect(pairDevice(createDeviceClient({ audience: 'https://api.nansen.ai', fetchFn }), { wait: async () => {}, onPending: () => {}, onIssued })).rejects.toMatchObject({ code: 'PAIRING_FAILED', message: 'Invalid token response. Run nansen login again.' });
   expect(onIssued).toHaveBeenCalledOnce();
   expect(onIssued.mock.calls[0][0].refreshToken).toBe('synthetic-cleanup-authority');

@@ -11,8 +11,8 @@ export function issuedFixture(privateJwk, { audience = 'https://api.nansen.ai', 
   const issuer = audience.replace('api.', 'idp.');
   const encode = value => Buffer.from(JSON.stringify(value)).toString('base64url');
   const exp = Math.floor(now / 1000) + 3600;
-  const input = `${encode({ alg: 'ES256' })}.${encode({ iss: issuer, aud: audience, sub: accountId, cnf: { jkt }, exp, iat: Math.floor(now / 1000), nbf: Math.floor(now / 1000), scope: 'nansen:read', session_access_revocation_version: 1, padding })}`;
-  return { issuer, audience, privateJwk, accessToken: `${input}.${sign('sha256', Buffer.from(input), { key, dsaEncoding: 'ieee-p1363' }).toString('base64url')}`, refreshToken: 'synthetic-refresh-secret', scope: 'nansen:read', expiresAt: exp * 1000, accountId };
+  const input = `${encode({ alg: 'ES256' })}.${encode({ iss: issuer, aud: audience, sub: accountId, cnf: { jkt }, exp, iat: Math.floor(now / 1000), nbf: Math.floor(now / 1000), scope: 'nansen:api', session_access_revocation_version: 1, padding })}`;
+  return { issuer, audience, privateJwk, accessToken: `${input}.${sign('sha256', Buffer.from(input), { key, dsaEncoding: 'ieee-p1363' }).toString('base64url')}`, refreshToken: 'synthetic-refresh-secret', scope: 'nansen:api', expiresAt: exp * 1000, accountId };
 }
 export function memoryOperation() {
   const entries = new Map();

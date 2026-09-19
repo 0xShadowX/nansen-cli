@@ -2605,7 +2605,7 @@
       }
     },
     "login": {
-      "description": "Fresh browser approval; securely save a revocable session. Plain login never persists NANSEN_API_KEY; it still overrides commands. Prerelease only; expired sessions require login until renewal ships.",
+      "description": "Fresh browser approval for API-key-equivalent account API permissions (nansen:api); securely save a revocable session. Wallet signing stays separate. Plain login never persists NANSEN_API_KEY; it still overrides commands. Prerelease only; expired sessions require login until renewal ships.",
       "options": {
         "no-browser": {
           "type": "boolean",
