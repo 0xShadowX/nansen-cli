@@ -4,17 +4,18 @@ description: "Discover trending tokens — screener, SM holdings, Nansen indicat
 metadata:
   openclaw:
     requires:
-      env:
-        - NANSEN_API_KEY
       bins:
         - nansen
-    primaryEnv: NANSEN_API_KEY
     install:
       - kind: node
         package: nansen-cli
         bins: [nansen]
 allowed-tools: Bash(nansen:*)
 ---
+## Authentication
+
+Use a saved browser session from `nansen login` when browser admission and the documented platform cohort are enabled, or use a conventional API key. `NANSEN_API_KEY` overrides the saved session. The direct-data commands below use normal credits and entitlements; login does not purchase credits. Browser rollout acceptance is still pending.
+
 
 # Token Discovery
 
@@ -46,7 +47,7 @@ nansen research token indicators --token $TOKEN --chain $CHAIN
 nansen research token flow-intelligence --token $TOKEN --chain $CHAIN
 # → net_flow_usd per label: smart_trader, whale, exchange, fresh_wallets, public_figure
 
-# Nansen Score Top Tokens — "what should I buy?" (public endpoint, any authenticated API key)
+# Nansen Score Top Tokens — "what should I buy?" (admitted direct-data endpoint; normal account entitlements apply)
 # Use this FIRST for discovery, then drill into individual tokens with `indicators` above
 nansen research token top-tokens --limit 25
 nansen research token top-tokens --market-cap largecap --limit 10

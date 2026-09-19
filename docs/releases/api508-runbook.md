@@ -1,0 +1,45 @@
+# Browser onboarding release preparation — NOT READY
+
+This is a repository-only runbook. [The evidence manifest](api508-evidence.json) records immutable source heads and hashes of completed, private root artifacts without copying raw captures. Artifact identifiers require the root evidence archive; they are not public download links. Null fields are missing evidence. No published version, accepted cohort, live ledger result or operator approval exists in this record.
+
+The package version in source is not a release decision. `package.json` includes `docs/browser-login.md` for self-contained recovery but excludes this release directory. The CLI admission fixture pins the actual API505 58 method/path pairs; it is not a guarantee for all `research` commands. Tests trace shipped examples through the public parser and real request transport with synthetic local responses. They cannot establish server entitlement, credits or deployment state.
+
+## Readiness matrix
+
+| Gate | Evidence now | Required before normal release |
+| --- | --- | --- |
+| API506 authentication, cancellation and telemetry | Frozen294a511; root43 focused,12 serialized public telemetry/opt-out,10 synthetic joint cases; CI Node20/22/24 | Preserve these results and rerun final stack; independent final-head acceptance |
+| API507 renewal | Frozen8f9085b writer3349 passed/9 skipped,94 focused | Independent A/security, root reconciled-head reruns and final API508 A/B/security coverage |
+| Platform custody/renewal | Older83d6 Mac/Linux custody; older1c16839 Mac/Linux native synthetic renewal | Exact candidate head/package native proof plus actual local/remote sign-in, renewal, restart and logout |
+| Cohort | Mac arm64 and Debian12 x64 Secret Service are possible narrow candidates | Named supported terminals/platforms and public walkthrough records; no claim that a cohort exists |
+| Windows/desktop cancellation | Missing | Explicitly exclude unaccepted platforms; fulfill any advertised platform's native/cancel requirements. Outstanding daemon-write cancellation remains a limitation |
+| Controlled accounts and billing | No accepted controlled-account or ledger evidence | Environment A/saved B; canonical UID; before/after ledger for free pairing/account and charged research; exhausted credits/plan refusal; account-owned billing settings |
+| Deployments, flags, gateway | Missing | Reviewed issuer/API/consumer/gateway digests, flag snapshots, header-size/headroom measurements, monitoring owner and rollback decision |
+| Denied load and latency | No release acceptance | Sustained single/multi-account zero-credit and restricted-plan refusal; profile/store cost and free-account availability; operator thresholds and rollback triggers |
+| Distribution and rollback | Missing candidate and compatible recovery version | Integrity-pinned package, v2-compatible recovery binary and native bindings; rehearsal on retained state/journals; dist-tag and ClawHub snapshots |
+
+The native 11 KiB read measurements at83d6 (1/4/16 reads:798/2956/11764ms on one host) are absolute cost observations. They establish no comparative improvement or throughput guarantee. Isolated Secret Service restart is not OS login/PAM/reboot acceptance. Apple sign-in remains deferred.
+
+## Operator order, after independent acceptance
+
+1. Record exact CLI commit, package integrity, issuer/API/consumer builds and gateway configuration. Complete the null fields with redacted evidence and named owners. Do not reuse a passing test from an older head as current-head proof.
+2. Confirm account and research admission controls separately, canonical account mapping, configured supported sign-in methods, revocation-feed anchors/retention and a tested recovery package. Browser-supported research requires both server gates. Enabling neither gate is the safe preparation state; source flags do not establish deployed state.
+3. Run controlled public local and remote walkthroughs for the proposed cohort: fresh plain login from anonymous, key-only, valid/expired saved session and environment-A/saved-B states; offline unverified status; free account check; admitted research with ledger attribution; restart; refresh; rejected/uncertain renewal; logout/revocation. Capture fixed errors and bounded telemetry under enabled and both opt-out settings. Never store tokens, device/user codes, raw hostnames or account identifiers in the public artifact.
+4. Verify selected environment keys remain effective; plain login always pairs and never persists the environment key. Explicit `login --human` offers legacy environment-key persistence. Selected key402 never auto-pays; anonymous x402 is separate. Check excluded agent fast/expert, MCP, portfolio DeFi, web, beta/internal and execution routes; wallet custody has separate authority. No admission widening follows from the CLI's existence.
+5. Obtain the release operator's explicit decision against the completed evidence. Only then plan distribution, activation, monitoring and a bounded rollback window. This draft work authorizes none of those actions.
+
+## Safe rollback prerequisites and sequence
+
+Prepare before enabling admission: a tested, integrity-pinned **v2-compatible recovery binary**, working native lock/store bindings for each cohort platform, retained v1/v2/rotation/cleanup fixtures, and the exact dist-tag/ClawHub state. The recovery version remains null until it exists and passes the drill. Never invent an older published version or imply logout converts v2 to v1.
+
+The operator must have authority and documented commands for issuer issuance/renewal, API research/account gates, consumer/feed retention and package distribution. Record those deployment-specific commands in the evidence manifest after infrastructure owners validate them. This repository does not establish those controls; guessing cloud commands is unsafe.
+
+1. Halt further promotion; preserve evidence and operator access. Disable research admission, then account admission as the reviewed containment plan requires. Separately stop new issuance/renewal using verified issuer controls. An admission flag alone does not revoke existing credentials everywhere.
+2. Keep revocation feed consumption, ordering/anchors, durable records and required retention active until issued access and refresh authority are revoked or expire under the verified protocol. Confirm already-issued resource access is refused and refresh/revocation state is accounted for. Do not turn off the feed or clear anchors to roll back.
+3. Restore distribution only to the tested v2-compatible recovery package, using recorded integrity and native bindings; retain installation/recovery instructions. Restore or withdraw ClawHub guidance deliberately under its distribution owner. A main push is not a harmless way to revert documentation.
+4. Quiesce other CLI owners before local recovery. Use the compatible binary to inspect offline status, complete pending cleanup and logout while preserving v2, journals and cleanup authority. Rehearse successful and interrupted renewal/cleanup before approving this path. No in-place pre-v2 downgrade is supported. Never delete session pointers/journals/locks, restore superseded keys, or run a pre-v2 binary against retained state.
+5. If native bindings are unavailable, use the self-contained [packaged legacy recovery instructions](../browser-login.md#offline-recovery-without-native-locking) only within their stated constraints; do not use manual editing for pending, corrupt or unrecognized journals. Prefer an explicit environment API key while repairing the compatible installation. Escalate ambiguous custody/cleanup to the designated owner, retain state, and verify no hidden payment or credential fallback.
+
+## Pipeline constraints
+
+`.github/workflows/ci.yml` tests PRs targeting main only. A stacked draft on `hulk/api-507-session-refresh` has no automatic matrix guarantee. Its main push path can run Changesets publication and then `sync-clawhub.yml`; the workflow filename participates in trusted publishing. Do not merge/retarget just to obtain CI, edit workflows, dispatch publication, switch credentials or work around missing App workflow permission. Record local tests and arrange permitted independent exact-head checks. Preserve the existing major changeset for plain-login and selected-key402 behavior; API508 adds guidance, not a second auth owner or payment path.

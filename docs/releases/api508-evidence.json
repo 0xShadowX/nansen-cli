@@ -1,0 +1,118 @@
+{
+  "status": "NOT_READY",
+  "purpose": "Repository-only preparation; no promotion, publication, deployment or cohort acceptance. Null means missing evidence, not a passed gate.",
+  "source": {
+    "api508Head": null,
+    "api508HeadNote": "Fill from reviewed PR head; this document cannot hash its own containing commit.",
+    "cliDependency": "8f9085b8035291a40babd7cea48252cb26333d64",
+    "cliAuthBase": "294a51130b98acd89e283d765f7088b1d6fb290d",
+    "api505ContractHead": "9190ae3decbba98c7513dbaa47695394ccd4515f",
+    "api505SourceEquivalentFinalHead": "bcbae999ba3e8a59ec56fd145832ff34319e541f",
+    "issuerHead": "3e08f9e76a3fd785df9f641f640234e5a87e00a4",
+    "consumerHead": "1e9bfcdf3af14a6a51459561a6a5e075b32e3840"
+  },
+  "evidence": [
+    {
+      "artifact": "API-506-final-root-verification.md",
+      "sha256": "68569cf99f0ae4194951cf595188653860809e0444df8dc09ba927af242089fa",
+      "sourceHead": "294a51130b98acd89e283d765f7088b1d6fb290d",
+      "kind": "root synthetic checks + CI summary",
+      "limits": "43 focused, 12 public telemetry, 10 joint cases; not controlled account/ledger or live ceremony."
+    },
+    {
+      "artifact": "joint-cli-api-9190-294a511-result.json",
+      "sha256": "45cca5b872319c5972c02a357527c8db4c89641efc45458b5360ca25910c96fd",
+      "sourceHead": "294a51130b98acd89e283d765f7088b1d6fb290d",
+      "kind": "synthetic joint API/CLI",
+      "limits": "API9190; controlled storage and synthetic issuance; no deployed gateway, ledger, browser or revocation feed acceptance."
+    },
+    {
+      "artifact": "API-507-reconciled-handoff.md",
+      "sha256": "d4a98af0e3855420ca77d042a24c620c39eebf634cb847eb5acc8284bfd4a8d2",
+      "sourceHead": "8f9085b8035291a40babd7cea48252cb26333d64",
+      "kind": "writer verification",
+      "limits": "3349 passed, 9 skipped full; 94 focused. Independent review/security and root reruns pending at preparation time."
+    },
+    {
+      "artifact": "api507-native-renewal-1c16839-result.json",
+      "sha256": "68d19312118bfc9a6112251d4e920e50897839d0469d317947f39e0f9625ba82",
+      "sourceHead": "1c16839b26d804a0a7e977888455747436069d63",
+      "kind": "macOS native synthetic renewal",
+      "limits": "Older source head, not reconciled8f9085b; one synthetic rotation, fresh process and cleanup; no public browser ceremony."
+    },
+    {
+      "artifact": "linux-native-refresh-1c16839-result.json",
+      "sha256": "eaa76db9ebdf43fbd9d5cfda6eb950e95f8f2db3afe149d7c7f7abe456011f06",
+      "sourceHead": "1c16839b26d804a0a7e977888455747436069d63",
+      "kind": "isolated Debian/GNOME native synthetic renewal",
+      "limits": "Older source head, not reconciled8f9085b; locked refusal85ms/restart/cleanup. No OS login/PAM/reboot, desktop cancellation or public remote ceremony."
+    },
+    {
+      "artifact": "api506-native-bundle-83d6-result.json",
+      "sha256": "4c8ae8c67e90ef6a8464a50950aa77b61df5df71dd8c35288222a6e6a8926f27",
+      "sourceHead": "83d6f5d1e851e9da1f46902e3df93dd523bddedd",
+      "kind": "macOS native bundle",
+      "limits": "Original source head; narrow custody proof, not current-head or release acceptance."
+    },
+    {
+      "artifact": "linux-native-83d6-result.json",
+      "sha256": "d8ed4c0f4cdac53dc84577a18397db01a0aafea86aa5b412b4596aeec6e12756",
+      "sourceHead": "83d6f5d1e851e9da1f46902e3df93dd523bddedd",
+      "kind": "Linux native bundle",
+      "limits": "Original source head; isolated Secret Service, 11455-byte bundle, locked refusal128ms; no cohort acceptance."
+    },
+    {
+      "artifact": "api506-native-latency-83d6-result.json",
+      "sha256": "f110bec786b354e334f634f0dcc0bdae36feab13e12957d31c96f7fe35f85aa9",
+      "sourceHead": "83d6f5d1e851e9da1f46902e3df93dd523bddedd",
+      "kind": "one-host absolute native read cost",
+      "limits": "11416-byte bundle; reads1/4/16 took798/2956/11764ms. Not before/after latency evidence."
+    }
+  ],
+  "candidate": {
+    "publishedVersion": null,
+    "tarballIntegrity": null,
+    "sourceDigest": null,
+    "supportedCohort": null,
+    "proposedCohort": "Local macOS arm64 and isolated Debian12 x64 Secret Service are candidates for further testing only. Windows excluded from this proposal; no cohort has been accepted.",
+    "independentReviewA": null,
+    "independentReviewB": null,
+    "securityReview": null,
+    "exactHeadCI": null
+  },
+  "acceptance": {
+    "controlledAccounts": null,
+    "canonicalUidMapping": null,
+    "beforeAfterLedger": null,
+    "issuerDeploymentDigest": null,
+    "apiDeploymentDigest": null,
+    "consumerDeploymentDigest": null,
+    "gatewayConfigurationDigest": null,
+    "accountFlagState": null,
+    "researchFlagState": null,
+    "gatewayHeaderHeadroom": null,
+    "publicLocalWalkthrough": null,
+    "publicRemoteWalkthrough": null,
+    "exactHeadNativeRenewal": null,
+    "osLoginPamReboot": null,
+    "desktopPromptCancellation": null,
+    "windowsSupport": null,
+    "revocationFeedRetention": null,
+    "rollbackDrill": null,
+    "operatorDecision": null,
+    "deniedLoadSingleAndMultiAccount": null,
+    "latencyDecisionAndThresholds": null
+  },
+  "rollback": {
+    "v2CompatiblePublishedRecoveryVersion": null,
+    "recoveryTarballIntegrity": null,
+    "nativeBindingAvailability": null,
+    "existingV1V2PendingJournalFixtureResults": null,
+    "revocationOwner": null,
+    "feedAnchorRetentionPlan": null,
+    "distributionOwner": null,
+    "distTagSnapshot": null,
+    "clawhubSnapshot": null,
+    "operatorCommandRecord": null
+  }
+}

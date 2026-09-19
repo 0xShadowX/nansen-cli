@@ -7,7 +7,7 @@
 
 import { describe, it, expect, afterAll } from 'vitest';
 import { execSync, execFileSync } from 'child_process';
-import { mkdtempSync, rmSync, existsSync } from 'fs';
+import { mkdtempSync, rmSync, existsSync, writeFileSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 
@@ -43,14 +43,19 @@ describe('Package Integrity', () => {
     execSync('npm init -y', { cwd: tmpDir, stdio: 'ignore' });
     execSync(`npm install --omit=optional --no-audit --no-fund "${tgzPath}"`, { cwd: tmpDir, stdio: 'ignore' });
 
-    // Smoke test - if any import fails (e.g., missing src/commands/), this crashes.
-    // Resolve the .cmd extension on Windows, where node_modules/.bin shims aren't extensionless.
-    const binary = join(tmpDir, 'node_modules', '.bin', process.platform === 'win32' ? 'nansen.cmd' : 'nansen');
-    const result = execSync(`"${binary}" --help`, {
-      cwd: tmpDir,
-      encoding: 'utf-8',
-    });
-
+    // Every child (including background update checks) inherits a local-only transport.
+    const capture = join(tmpDir, 'capture.mjs');
+    writeFileSync(capture, `globalThis.fetch = async () => new Response(JSON.stringify({data: []}));`);
+    const childEnv = { ...process.env, NODE_OPTIONS: `${process.env.NODE_OPTIONS || ''} --import=${capture}`, DO_NOT_TRACK: '1', NANSEN_NO_TELEMETRY: '1' };
+    const packageRoot = join(tmpDir, 'node_modules/nansen-cli');
+    const result = execFileSync(process.execPath, [join(packageRoot, 'src/index.js'), '--help'], { cwd: tmpDir, encoding: 'utf8', env: childEnv });
+    const onboarding = execFileSync(process.execPath, [join(packageRoot, 'scripts/postinstall.js')], { cwd: tmpDir, encoding: 'utf8', env: { ...childEnv, npm_config_global: 'true' }, stdio: ['pipe', 'pipe', 'pipe'] });
+    expect(onboarding).toBe('');
+    const recovery = readFileSync(join(packageRoot, 'docs/browser-login.md'), 'utf8');
+    expect(recovery).toContain('## Offline recovery without native locking');
+    expect(recovery).toContain('v2');
+    expect(existsSync(join(packageRoot, 'docs/releases/api508-evidence.json'))).toBe(false);
+    expect(readFileSync(join(packageRoot, 'skills/nansen-wallet-profiler/SKILL.md'), 'utf8')).toContain('Browser rollout acceptance is still pending.');
     expect(result).toContain('nansen');
     expect(result).toContain('COMMANDS');
     expect(existsSync(join(tmpDir, 'node_modules/nansen-cli/docs/browser-login.md'))).toBe(true);
@@ -70,7 +75,7 @@ describe('Package Integrity', () => {
       try { await createAuthState({directory:${JSON.stringify(join(tmpDir, 'auth'))}}).begin(); throw new Error('unexpected native availability'); }
       catch (error) { if(error.code !== 'AUTH_LOCK_UNAVAILABLE' || !error.message.includes('offline-recovery-without-native-locking')) throw error; }
       console.log('key-auth-without-native-ok');
-    `], { cwd: tmpDir, encoding: 'utf8' });
+    `], { cwd: tmpDir, encoding: 'utf8', env: childEnv });
     expect(smoke).toContain('key-auth-without-native-ok');
 
     // Cleanup tarball

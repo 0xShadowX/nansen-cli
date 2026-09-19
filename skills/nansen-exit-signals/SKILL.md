@@ -4,17 +4,18 @@ description: "Is smart money exiting a token I hold? Net flow direction, seller 
 metadata:
   openclaw:
     requires:
-      env:
-        - NANSEN_API_KEY
       bins:
         - nansen
-    primaryEnv: NANSEN_API_KEY
     install:
       - kind: node
         package: nansen-cli
         bins: [nansen]
 allowed-tools: Bash(nansen:*)
 ---
+
+## Authentication
+
+Use a saved browser session from `nansen login` when browser admission and the documented platform cohort are enabled, or use a conventional API key. `NANSEN_API_KEY` overrides the saved session. The direct-data commands below use normal credits and entitlements; login does not purchase credits. Browser rollout acceptance is still pending.
 
 # Exit Signal
 
