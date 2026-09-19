@@ -122,11 +122,11 @@ describe('selected credential and payment boundary', () => {
     await new NansenAPI('A', 'https://api.nansen.ai', { defaultHeaders: { 'Payment-Signature': 'manual' } }).getAccount();
     expect(fetch.mock.calls[0][1].headers).toMatchObject({ apikey: 'A', 'Payment-Signature': 'manual' });
   });
-  it('never exports a browser session through key-only trading or MCP seams', async () => {
+  it('never misrepresents a browser session as an exportable MCP API key', async () => {
     const f = fixture(); const bundle = sessionFixture(); const attempt = await f.state.begin();
     await f.state.install(attempt, { bundle }); await f.state.finish(attempt);
     vi.stubEnv('HOME', f.home); vi.stubEnv('NANSEN_API_KEY', undefined);
-    expect(loadConfig().apiKey).toBeNull(); // trading verifySwapOutcome caller
+    expect(loadConfig().apiKey).toBeNull(); // legacy key accessor must not export a bearer
     const api = new NansenAPI(); expect(api.apiKey).toBeNull();
     const log = vi.fn();
     await expect(buildMcpCommands({ log }).mcp(['install', 'claude-code'], api, { 'dry-run': true }, {})).rejects.toMatchObject({ code: 'API_KEY_REQUIRED' });

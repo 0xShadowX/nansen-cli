@@ -78,13 +78,13 @@ export function createDeviceClient({ audience, privateJwk = createDeviceKey(), f
 }
 export function validateSession(bundle, now = Date.now()) {
   try {
-    if (bundle.issuer !== trustedIssuer(bundle.audience) || bundle.scope !== 'nansen:read' || typeof bundle.refreshToken !== 'string' || !bundle.refreshToken || bundle.refreshToken.length > 4096 || typeof bundle.accessToken !== 'string') throw new Error();
+    if (bundle.issuer !== trustedIssuer(bundle.audience) || bundle.scope !== 'nansen:api' || typeof bundle.refreshToken !== 'string' || !bundle.refreshToken || bundle.refreshToken.length > 4096 || typeof bundle.accessToken !== 'string') throw new Error();
     const [header, payload, signature, extra] = bundle.accessToken.split('.');
     const h = JSON.parse(Buffer.from(header, 'base64url'));
     const claims = JSON.parse(Buffer.from(payload, 'base64url'));
     const publicJwk = createPublicKey(createPrivateKey({ key: bundle.privateJwk, format: 'jwk' })).export({ format: 'jwk' });
     const jkt = createHash('sha256').update(JSON.stringify({ crv: publicJwk.crv, kty: publicJwk.kty, x: publicJwk.x, y: publicJwk.y })).digest('base64url');
-    if (extra || !signature || h.alg !== 'ES256' || publicJwk.crv !== 'P-256' || claims.iss !== bundle.issuer || claims.aud !== bundle.audience || claims.scope !== 'nansen:read' || claims.cnf?.jkt !== jkt || !Number.isFinite(claims.exp) || !Number.isFinite(bundle.expiresAt) || bundle.expiresAt > claims.exp * 1000) throw new Error();
+    if (extra || !signature || h.alg !== 'ES256' || publicJwk.crv !== 'P-256' || claims.iss !== bundle.issuer || claims.aud !== bundle.audience || claims.scope !== 'nansen:api' || claims.cnf?.jkt !== jkt || !Number.isFinite(claims.exp) || !Number.isFinite(bundle.expiresAt) || bundle.expiresAt > claims.exp * 1000) throw new Error();
     if (claims.session_access_revocation_version !== 1) throw new AuthError('BROWSER_SESSION_SETUP_REQUIRED', 'The session lacks supported revocation coverage. Browser login may not be enabled for this cohort. Ask the operator to verify issuer SESSION_ACCESS_REVOCATION_ENABLED and API BROWSER_SESSION_ACCOUNT_ENABLED before retrying; repeated pairing will not repair server setup.');
     if (bundle.expiresAt <= now) throw new AuthError('SESSION_EXPIRED', 'The saved browser session has expired. Run: nansen login. Automatic renewal is not available in this prerelease.');
   } catch (error) {
@@ -93,7 +93,7 @@ export function validateSession(bundle, now = Date.now()) {
   }
 }
 export async function pairDevice(client, { signal, onPending, onIssued, onBeforePoll, now = Date.now, wait = (ms, signal) => delay(ms, undefined, { signal }) } = {}) {
-  const { response, data } = await client.request('/auth/device/authorize', { audience: client.audience, scope: 'nansen:read', client_label: 'nansen CLI' }, signal);
+  const { response, data } = await client.request('/auth/device/authorize', { audience: client.audience, scope: 'nansen:api', client_label: 'nansen CLI' }, signal);
   if (!response.ok) throw new AuthError('PAIRING_FAILED', 'Could not start browser approval. Retry nansen login later.');
   if (typeof data.device_code !== 'string' || !data.device_code || typeof data.user_code !== 'string' || !/^[A-Za-z0-9-]{4,32}$/.test(data.user_code) || !Number.isFinite(data.expires_in) || data.expires_in <= 0 || data.expires_in > 3600 || !Number.isFinite(data.interval) || data.interval < 1 || data.interval > 600) throw new AuthError('PAIRING_FAILED', 'The pairing service returned an invalid grant. Retry later.');
   const expected = `${client.issuer}/device`;
