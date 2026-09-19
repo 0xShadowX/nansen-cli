@@ -2114,6 +2114,8 @@ PREREQUISITE:
   A wallet must be configured before using this command (the trading API builds
   a transaction specific to your sender address).
   Set one up with: nansen wallet create
+  API access is required for pre-trade compliance screening.
+  Authenticate with: nansen login (or set NANSEN_API_KEY)
 
 OPTIONS:
   --chain <chain>           Source chain: solana, base
@@ -2549,6 +2551,10 @@ CROSS-CHAIN NOTES (when using --to-chain):
 
       if (!quoteId) {
         throw new CommandError(`Usage: nansen trade execute --quote <quoteId> [options]
+
+PREREQUISITE:
+  API access is required for pre-trade compliance screening.
+  Authenticate with: nansen login (or set NANSEN_API_KEY)
 
 OPTIONS:
   --quote <id>              Quote ID from 'nansen quote'
