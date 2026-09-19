@@ -1,13 +1,14 @@
 import { spawn } from 'node:child_process';
 import { randomBytes, createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { AuthError } from './auth-credentials.js';
+import path from 'node:path';
+import { AuthError, authDirectory } from './auth-credentials.js';
 
 export const CHUNK_BYTES = 2048;
 export const MAX_BUNDLE_BYTES = 16384;
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 const unavailable = () => new AuthError('AUTH_STORE_UNAVAILABLE', 'Secure credential storage is unavailable or locked. Unlock your OS credential store and retry nansen login. No file fallback is used.');
-export function nativeStoreOperation(operation, account, bytes) {
+export function nativeStoreOperation(operation, account, bytes, { directory = authDirectory() } = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [fileURLToPath(new URL('./auth-store-worker.js', import.meta.url))], {
       stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
@@ -15,26 +16,54 @@ export function nativeStoreOperation(operation, account, bytes) {
       env: Object.fromEntries(['PATH', 'HOME', 'USERPROFILE', 'SystemRoot', 'LOCALAPPDATA', 'APPDATA', 'DBUS_SESSION_BUS_ADDRESS', 'XDG_RUNTIME_DIR'].filter(k => process.env[k] !== undefined).map(k => [k, process.env[k]])),
     });
     let output = '';
+    let ready = false, result;
     let failed = false;
-    const timer = setTimeout(() => { failed = true; child.kill('SIGKILL'); }, 10000);
-    child.stdout.on('data', chunk => { output += chunk; if (output.length > 40000) { failed = true; child.kill('SIGKILL'); } });
+    let terminationDeadline;
+    const stop = () => {
+      failed = true;
+      try { child.kill('SIGKILL'); } catch { /* retain exclusion until OS termination */ }
+      terminationDeadline ??= setTimeout(() => {
+        // Never turn an unobserved termination into cleanup success. The child
+        // still owns its gate; recovery must retain the journal on contention.
+        child.stdin.destroy(); child.stdout.destroy(); child.stderr.destroy();
+        child.unref(); reject(unavailable());
+      }, 1000);
+    };
+    const timer = setTimeout(stop, 10000);
+    child.stdout.on('data', chunk => {
+      if (failed) return;
+      output += chunk;
+      if (output.length > 40000) { stop(); return; }
+      let end;
+      while ((end = output.indexOf('\n')) !== -1) {
+        const line = output.slice(0, end); output = output.slice(end + 1);
+        try {
+          const message = JSON.parse(line);
+          if (!ready && message.ready === true) {
+            ready = true;
+            // The child already holds execution/cleanup exclusion. Keep the
+            // pipe open as a parent-lifetime signal; never send secrets early.
+            child.stdin.write(JSON.stringify({ operation, account, ...(bytes && { data: Buffer.from(bytes).toString('base64') }) }) + '\n');
+          } else if (ready && !result && Object.hasOwn(message, 'value')) result = message;
+          else throw new Error();
+        } catch { stop(); }
+      }
+    });
     child.stderr.resume();
     child.stdin.on('error', () => {});
     child.on('error', () => { failed = true; });
-    // Wait for close, including after kill, before releasing the caller's lock.
+    // Success requires actual close; an unobserved kill is a bounded failure.
     child.on('close', code => {
-      clearTimeout(timer);
+      clearTimeout(timer); clearTimeout(terminationDeadline);
       try {
-        if (failed || code !== 0) throw new Error();
-        const result = JSON.parse(output);
-        if (result.error) throw new Error();
+        if (failed || code !== 0 || !ready || !result || output) throw new Error();
         resolve(operation === 'get' && result.value !== null ? Buffer.from(result.value, 'base64') : result.value);
       } catch { reject(unavailable()); }
     });
-    child.stdin.end(JSON.stringify({ operation, account, ...(bytes && { data: Buffer.from(bytes).toString('base64') }) }));
+    child.stdin.write(JSON.stringify({ directory: path.resolve(directory) }) + '\n');
   });
 }
-export function createAuthStore({ operation = nativeStoreOperation, barrier = async () => {} } = {}) {
+export function createAuthStore({ directory, operation = (op, account, bytes) => nativeStoreOperation(op, account, bytes, { directory }), barrier = async () => {} } = {}) {
   const name = (generation, suffix) => {
     if (!/^[a-f0-9-]{36}$/.test(generation)) throw unavailable();
     return `${generation}.${suffix}`;

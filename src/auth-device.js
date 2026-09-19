@@ -122,6 +122,7 @@ export async function pairDevice(client, { signal, onPending, onIssued, onBefore
       if (tokens.token_type !== 'Bearer' || !Number.isFinite(tokens.expires_in) || tokens.expires_in <= 0 || tokens.expires_in > 3600) throw new AuthError('PAIRING_FAILED', 'Invalid token response. Run nansen login again.');
       let exp;
       try { exp = JSON.parse(Buffer.from(tokens.access_token.split('.')[1], 'base64url')).exp * 1000; } catch { /* validation below */ }
+      if (!Number.isFinite(exp)) throw new AuthError('PAIRING_FAILED', 'Invalid token response. Run nansen login again.');
       bundle.expiresAt = Math.min(now() + tokens.expires_in * 1000, exp);
       validateSession(bundle, now());
       bundle.accountId = await client.verify(bundle.accessToken, signal);

@@ -100,3 +100,11 @@ it('names cohort setup gates without inferring their actual server values', () =
   expect(() => validateSession(bundle)).toThrow('SESSION_ACCESS_REVOCATION_ENABLED');
   expect(() => validateSession(bundle)).toThrow('BROWSER_SESSION_ACCOUNT_ENABLED');
 });
+it.each(['not-a-jwt', 'e30.e30.signature'])('reports malformed issued expiry as a token-response failure (%s)', async access_token => {
+  const onIssued = vi.fn();
+  const fetchFn = vi.fn().mockResolvedValueOnce(response(200, grant())).mockResolvedValueOnce(response(200, { access_token, refresh_token: 'synthetic-cleanup-authority', token_type: 'Bearer', scope: 'nansen:read', expires_in: 3600 }));
+  await expect(pairDevice(createDeviceClient({ audience: 'https://api.nansen.ai', fetchFn }), { wait: async () => {}, onPending: () => {}, onIssued })).rejects.toMatchObject({ code: 'PAIRING_FAILED', message: 'Invalid token response. Run nansen login again.' });
+  expect(onIssued).toHaveBeenCalledOnce();
+  expect(onIssued.mock.calls[0][0].refreshToken).toBe('synthetic-cleanup-authority');
+  expect(onIssued.mock.calls[0][0]).not.toHaveProperty('expiresAt');
+});

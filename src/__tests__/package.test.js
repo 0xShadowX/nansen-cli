@@ -54,6 +54,7 @@ describe('Package Integrity', () => {
     expect(result).toContain('nansen');
     expect(result).toContain('COMMANDS');
     expect(existsSync(join(tmpDir, 'node_modules/nansen-cli/docs/browser-login.md'))).toBe(true);
+    expect(existsSync(join(tmpDir, 'node_modules/nansen-cli/src/auth-store-native.js'))).toBe(true);
     // Native auth modules must stay lazy when optional bindings are omitted.
     const apiModule = join(tmpDir, 'node_modules/nansen-cli/src/api.js');
     const stateModule = join(tmpDir, 'node_modules/nansen-cli/src/auth-state.js');

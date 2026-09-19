@@ -1074,7 +1074,8 @@ export function buildCommands(deps = {}) {
     authState = defaultAuthState(),
     browserLoginFn = browserLogin,
     getConfigFileFn = getConfigFile,
-    isTTY = process.stdin.isTTY && process.stdout.isTTY,
+    isTTY = process.stdout.isTTY,
+    stdinTTY = deps.isTTY ?? process.stdin.isTTY,
     env = process.env
   } = deps;
 
@@ -1205,7 +1206,7 @@ export function buildCommands(deps = {}) {
       }
 
       if (apiKey === undefined && flags.human) {
-        if (!isTTY) {
+        if (!stdinTTY) {
           throw new CommandError('--human requires an interactive terminal. Set NANSEN_API_KEY in the environment (or pass --api-key <key>, which is recorded in shell history).', 'NOT_A_TTY', {
             error: 'NOT_A_TTY',
             message: '--human requires an interactive terminal. Set NANSEN_API_KEY in the environment (or pass --api-key <key>, which is recorded in shell history).',

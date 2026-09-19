@@ -15,9 +15,9 @@ function safePath(file, directory = false) {
 }
 async function loadLocks() {
   try { return (await import('fs-native-extensions')).default; }
-  catch { throw new AuthError('AUTH_LOCK_UNAVAILABLE', 'Native authentication locking is unavailable. Reinstall nansen-cli with optional dependencies to save or remove authentication. Environment API keys still work. For offline saved-key removal, stop every CLI/auth process, then follow docs/browser-login.md#offline-recovery-without-native-locking. Do not delete auth journals or wallet files.'); }
+  catch { throw new AuthError('AUTH_LOCK_UNAVAILABLE', 'Native authentication locking is unavailable. Reinstall nansen-cli with optional dependencies to save or remove authentication. Legacy key setup and logout also require this binding. Environment API keys still work. For offline saved-key removal, stop every CLI/auth process, then follow docs/browser-login.md#offline-recovery-without-native-locking. Do not delete auth journals or wallet files.'); }
 }
-export function createAuthState({ directory = authDirectory(), store = createAuthStore(), retire = async () => ({ remote: 'unconfirmed' }), barrier = async () => {}, locks = loadLocks } = {}) {
+export function createAuthState({ directory = authDirectory(), store = createAuthStore({ directory }), retire = async () => ({ remote: 'unconfirmed' }), barrier = async () => {}, locks = loadLocks } = {}) {
   const configFile = path.join(directory, 'config.json');
   const journalDir = path.join(directory, 'auth-operations');
   function prepare() {

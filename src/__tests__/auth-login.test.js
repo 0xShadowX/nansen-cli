@@ -208,3 +208,13 @@ it.each(['env', 'config'])('identifies the actual unsupported origin source: %s'
   await expect(browserLogin({ env: f.env, state: f.state, pair, isTTY: true, log: vi.fn(), signals: new EventEmitter() })).rejects.toThrow(source === 'env' ? 'Correct NANSEN_BASE_URL' : 'Correct baseUrl in config.json');
   expect(pair).not.toHaveBeenCalled();
 });
+it('legacy prompting depends on stdin while redirected browser output stays machine-readable', async () => {
+  const f = fixture(); const promptFn = vi.fn().mockResolvedValue('synthetic-key');
+  const browserLoginFn = vi.fn();
+  class API { async getAccount() { return { user_id: 'synthetic-account' }; } }
+  const commands = buildCommands({ env: f.env, authState: f.state, isTTY: false, stdinTTY: true, promptFn, browserLoginFn, NansenAPIClass: API, log: vi.fn() });
+  await commands.login([], null, { human: true }, {});
+  expect(promptFn).toHaveBeenCalledOnce(); expect(JSON.parse(fs.readFileSync(f.file)).apiKey).toBe('synthetic-key');
+  await commands.login([], null, {}, {});
+  expect(browserLoginFn.mock.calls[0][0].isTTY).toBe(false);
+});
