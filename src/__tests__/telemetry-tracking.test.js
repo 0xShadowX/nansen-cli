@@ -157,7 +157,7 @@ describe('telemetry tracking for all first-level commands', () => {
     }
     await runCLI(['login', '--api-key', 'test-key'], baseDeps({
       NansenAPIClass: FailingAPI,
-      saveConfigFn: () => {},
+
       getConfigFileFn: () => '/tmp/fake-config.json',
     }));
     expect(wasTracked()).toBe(1);
@@ -167,7 +167,7 @@ describe('telemetry tracking for all first-level commands', () => {
 
   it('logout', async () => {
     await runCLI(['logout'], baseDeps({
-      deleteConfigFn: () => true,
+      authState: { logout: async () => ({ removed: true, cleanup: [] }) },
       getConfigFileFn: () => '/tmp/fake-config.json',
     }));
     expect(wasTracked()).toBe(1);

@@ -37,6 +37,8 @@ function mockApi(overrides = {}) {
     apiKey: 'test-key',
     baseUrl: 'https://api.nansen.ai',
     defaultHeaders: {},
+    selection: { kind: overrides.apiKey === null ? 'anonymous' : 'api-key' },
+    requestCredentials: async () => overrides.apiKey === null ? {} : { apikey: overrides.apiKey || 'test-key' },
     ...overrides,
   };
 }
