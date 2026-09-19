@@ -20,7 +20,10 @@ async function barrier(phase, file) {
   }
 }
 async function transport(url, options) {
-  if (dnsFailure && url.endsWith('/token/refresh')) return nativeFetch(url, options);
+  if (dnsFailure && url.endsWith('/token/refresh')) {
+    if (new URL(url).origin !== 'http://localhost:54321') throw new Error('Native fixture requires loopback');
+    return nativeFetch(url, options);
+  }
   const id = ++sequence;
   process.send({ event: 'request', id, url, method: options.method, headers: options.headers, body: options.body });
   const reply = await new Promise((resolve, reject) => {
@@ -52,7 +55,7 @@ process.on('message', async message => {
       globalThis.fetch = transport;
     } else if (message.action === 'dns-failure') {
       dnsFailure = true;
-      // Real Node/Undici fetch with injected lookup: no socket can be opened.
+      // Native lifecycle, loopback fixture only; preload independently blocks all production hosts.
       dns.lookup = (hostname, options, callback) => {
         if (typeof options === 'function') callback = options;
         callback(Object.assign(new Error('synthetic lookup failure'), { code: 'ENOTFOUND', syscall: 'getaddrinfo', hostname, errno: -3008 }));

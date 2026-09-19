@@ -246,7 +246,7 @@ export function createAuthState({ directory = authDirectory(), store = createAut
   }
   const blockedReason = error => ({ SESSION_REFRESH_REJECTED: 'rejected', BROWSER_SESSION_SETUP_REQUIRED: 'setup', SESSION_CLOCK_SKEW: 'clock', SESSION_EXPIRED: 'expired', SESSION_REFRESH_PROTOCOL_ERROR: 'protocol' }[error.code] || 'uncertain');
   function renewalError(reason) {
-    if (reason === 'setup') return new AuthError('BROWSER_SESSION_SETUP_REQUIRED', 'The renewed session lacks supported revocation coverage. Ask the operator to verify SESSION_ACCESS_REVOCATION_ENABLED and BROWSER_SESSION_ACCOUNT_ENABLED. Renewal may have consumed the credential; do not retry it. Pair again only after server setup is repaired.');
+    if (reason === 'setup') return new AuthError('BROWSER_SESSION_SETUP_REQUIRED', 'The renewed session has incompatible issuer setup. Ask the operator to verify the supported 3600-second lifetime, SESSION_ACCESS_REVOCATION_ENABLED and BROWSER_SESSION_ACCOUNT_ENABLED. Renewal may have consumed the credential; do not retry it. Pair again only after server setup is repaired.');
     if (reason === 'clock') return new AuthError('SESSION_CLOCK_SKEW', 'The renewed session is ahead of the local clock. Synchronize system time, then run nansen login. The possibly consumed refresh credential will not be retried.');
     if (reason === 'expired') return new AuthError('SESSION_EXPIRED', 'The renewed access token was already expired. Check system time and issuer configuration, then run nansen login. The possibly consumed refresh credential will not be retried.');
     if (reason === 'protocol') return new AuthError('SESSION_REFRESH_PROTOCOL_ERROR', 'The issuer rejected the refresh request format. Check CLI/issuer compatibility with the operator before running nansen login. The request will not be retried.');
@@ -388,13 +388,13 @@ export function createAuthState({ directory = authDirectory(), store = createAut
         const config = read();
         const old = config.auth?.active;
         const id = randomUUID();
-        let damagedRotation = false;
+        let damagedRotation;
         if (old?.kind === 'session') {
           let rotation;
           try { rotation = rotationFor(config); }
           catch (error) {
             if (!['AUTH_JOURNAL_INVALID', 'AUTH_STATE_INVALID'].includes(error.code)) throw error;
-            damagedRotation = true;
+            damagedRotation = error.code;
           }
           if (!rotation) await atomic(journalPath(id), { id, generations: [old.generation], ...(damagedRotation && { blockedBy: config.auth.selectionEpoch }) });
         }
@@ -403,7 +403,7 @@ export function createAuthState({ directory = authDirectory(), store = createAut
         try { await atomic(configFile, next); }
         catch (error) { if (read().auth?.selectionEpoch !== next.auth.selectionEpoch) throw error; }
         let cleanup;
-        try { await barrier('logout-committed'); cleanup = damagedRotation ? [{ local: 'incomplete', remote: 'unconfirmed', code: 'AUTH_JOURNAL_INVALID' }] : await recover(); }
+        try { await barrier('logout-committed'); cleanup = damagedRotation ? [{ local: 'incomplete', remote: 'unconfirmed', code: damagedRotation }] : await recover(); }
         catch (error) { cleanup = [{ local: 'incomplete', remote: 'unconfirmed', ...(error.code === 'AUTH_JOURNAL_INVALID' && { code: error.code }) }]; }
         return { removed: Boolean(config.apiKey || old?.kind === 'session'), cleanup };
       });

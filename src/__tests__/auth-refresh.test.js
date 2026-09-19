@@ -196,7 +196,7 @@ it.each(['scope', 'subject', 'key', 'audience', 'coverage', 'lifetime', 'size', 
   parts[1] = Buffer.from(JSON.stringify(claims)).toString('base64url'); next = { ...next, accessToken: parts.join('.') };
   f.fetchFn.mockResolvedValue(response(200, { access_token: next.accessToken, refresh_token: kind === 'repeat' ? f.old.refreshToken : kind === 'size' ? 's'.repeat(4097) : 'next', token_type: 'Bearer', expires_in: 3600 }));
   const error = await f.acquire().catch(e => e);
-  expect(error.code).toBe(kind === 'coverage' ? 'BROWSER_SESSION_SETUP_REQUIRED' : 'SESSION_RENEWAL_UNCERTAIN'); expect(JSON.stringify(error)).not.toContain(next.accessToken);
+  expect(error.code).toBe(['coverage', 'lifetime'].includes(kind) ? 'BROWSER_SESSION_SETUP_REQUIRED' : 'SESSION_RENEWAL_UNCERTAIN'); expect(JSON.stringify(error)).not.toContain(next.accessToken);
   expect(json(f.file).auth.active.generation).toBe(f.selection.generation); expect(f.retire).not.toHaveBeenCalled();
 });
 it('the full store budget stops a chunk sequence and a later command cannot reuse its consumed source', async () => {
@@ -264,6 +264,8 @@ it.each(['null', '{"PRIVATE-CORRUPTION', 'x'.repeat(4097), 'broken-symlink'])('c
   await expect(f.state.begin()).rejects.toMatchObject({ code: 'AUTH_JOURNAL_INVALID' });
   expect((await f.state.logout()).cleanup).toContainEqual({ local: 'incomplete', remote: 'unconfirmed', code: 'AUTH_JOURNAL_INVALID' });
   expect(json(f.file).auth.active.kind).toBe('none');
+  await expect(f.state.begin()).rejects.toMatchObject({ code: 'AUTH_JOURNAL_INVALID' });
+  await expect(f.state.begin({ preflight: false })).rejects.toMatchObject({ code: 'AUTH_JOURNAL_INVALID' });
   await expect(f.acquire()).rejects.toMatchObject({ code: 'AUTH_SELECTION_CHANGED' });
   if (contents === 'broken-symlink') expect(fs.lstatSync(f.journal()).isSymbolicLink()).toBe(true);
   else expect(fs.readFileSync(f.journal(), 'utf8')).toBe(contents);
@@ -316,4 +318,26 @@ it.each(['ECONNREFUSED', 'ENOTFOUND', 'ECONNRESET', 'UND_ERR_CONNECT_TIMEOUT', '
   const f = await fixture(); f.fetchFn.mockRejectedValue(Object.assign(new TypeError('fetch failed'), { cause: Object.assign(new Error('private hostname'), { code, syscall: 'connect', errno: -61, address: '127.0.0.1', port: 443 }) }));
   await expect(f.acquire()).rejects.toMatchObject({ code: 'SESSION_RENEWAL_UNCERTAIN' });
   await expect(f.acquire()).rejects.toMatchObject({ code: 'SESSION_RENEWAL_UNCERTAIN' }); expect(f.fetchFn).toHaveBeenCalledOnce();
+});
+
+it.each(['response', 'jwt'])('over-ceiling %s lifetime blocks durably with setup guidance and retained retirement authority', async kind => {
+  const f = await fixture(); const next = issuedFixture(f.old.privateJwk, { now: f.now() });
+  const parts = next.accessToken.split('.'); const claims = JSON.parse(Buffer.from(parts[1], 'base64url'));
+  if (kind === 'jwt') { claims.exp = claims.iat + 3601; parts[1] = Buffer.from(JSON.stringify(claims)).toString('base64url'); }
+  f.fetchFn.mockResolvedValue(response(200, { access_token: parts.join('.'), refresh_token: 'rotated-lifetime', token_type: 'Bearer', expires_in: kind === 'response' ? 3601 : 3600 }));
+  await expect(f.acquire()).rejects.toMatchObject({ code: 'BROWSER_SESSION_SETUP_REQUIRED', message: expect.stringContaining('3600-second lifetime') });
+  expect(json(f.journal())).toMatchObject({ phase: 'blocked', reason: 'setup' });
+  const replay = vi.fn(); const restarted = createAuthState({ directory: f.directory, store: f.store, now: f.now, refresh: replay, retire: f.retire });
+  await expect(restarted.acquireSession(f.selection, { audience: f.old.audience })).rejects.toMatchObject({ code: 'BROWSER_SESSION_SETUP_REQUIRED', message: expect.stringContaining('3600-second lifetime') });
+  expect(replay).not.toHaveBeenCalled(); expect(f.fetchFn).toHaveBeenCalledOnce(); expect(f.retire).not.toHaveBeenCalled();
+  await restarted.logout(); expect(f.retire).toHaveBeenCalledOnce(); expect(f.retire.mock.calls[0][0].refreshToken).toBe(f.old.refreshToken);
+});
+it('logout reports pointer/journal disagreement as state invalid and retains both authorities', async () => {
+  const f = await fixture({ barrier: async phase => { if (phase === 'rotation-stored') throw new Error('crash'); } });
+  await expect(f.acquire()).rejects.toThrow('crash');
+  const config = json(f.file); config.auth.active.generation = randomUUID(); fs.writeFileSync(f.file, JSON.stringify(config));
+  const before = [...f.memory.entries.keys()]; const journal = fs.readFileSync(f.journal(), 'utf8');
+  expect((await f.state.logout()).cleanup).toEqual([{ local: 'incomplete', remote: 'unconfirmed', code: 'AUTH_STATE_INVALID' }]);
+  expect(json(f.file).auth.active.kind).toBe('none'); expect(fs.readFileSync(f.journal(), 'utf8')).toBe(journal);
+  expect([...f.memory.entries.keys()]).toEqual(before); expect(f.retire).not.toHaveBeenCalled();
 });

@@ -15,6 +15,7 @@ export function deviceProof(privateJwk, url, nonce, now = Date.now()) {
   const input = `${encode({ typ: 'dpop+jwt', alg: 'ES256', jwk })}.${encode({ htm: 'POST', htu: url, jti: randomUUID(), iat: Math.floor(now / 1000), ...(nonce && { nonce }) })}`;
   return `${input}.${sign('sha256', Buffer.from(input), { key, dsaEncoding: 'ieee-p1363' }).toString('base64url')}`;
 }
+const lifetimeError = () => new AuthError('BROWSER_SESSION_SETUP_REQUIRED', 'The issuer returned a session lifetime above the supported 3600 seconds. Ask the session operator to reconcile issuer lifetime configuration and CLI compatibility before pairing again.');
 const transportError = () => new AuthError('AUTH_NETWORK_ERROR', 'Authentication service unavailable or timed out. Retry later. If token issuance completed but its response was lost, run nansen login again; remote cleanup may be unconfirmed.');
 // Only native Undici lifecycle evidence for this exact invocation can establish
 // a pre-connection failure. Proxy CONNECTs, retries, wrappers without evidence,
@@ -119,7 +120,8 @@ export function validateSession(bundle, now = Date.now(), { allowExpired = false
     const jkt = createHash('sha256').update(JSON.stringify({ crv: publicJwk.crv, kty: publicJwk.kty, x: publicJwk.x, y: publicJwk.y })).digest('base64url');
     if (extra || !signature || h.alg !== 'ES256' || publicJwk.crv !== 'P-256' || claims.iss !== bundle.issuer || claims.aud !== bundle.audience || claims.scope !== 'nansen:read' || claims.cnf?.jkt !== jkt || !Number.isFinite(claims.exp) || !Number.isFinite(bundle.expiresAt) || bundle.expiresAt > claims.exp * 1000) throw new Error();
     if (claims.session_access_revocation_version !== 1) throw new AuthError('BROWSER_SESSION_SETUP_REQUIRED', 'The session lacks supported revocation coverage. Browser login may not be enabled for this cohort. Ask the operator to verify issuer SESSION_ACCESS_REVOCATION_ENABLED and API BROWSER_SESSION_ACCOUNT_ENABLED before retrying; repeated pairing will not repair server setup.');
-    if (!Number.isFinite(claims.iat) || !Number.isFinite(claims.nbf) || claims.exp <= claims.iat || claims.exp - claims.iat > 3600  || typeof claims.sub !== 'string' || !claims.sub || (bundle.accountId !== undefined && claims.sub !== bundle.accountId)) throw new Error();
+    if (!Number.isFinite(claims.iat) || !Number.isFinite(claims.nbf) || claims.exp <= claims.iat || typeof claims.sub !== 'string' || !claims.sub || (bundle.accountId !== undefined && claims.sub !== bundle.accountId)) throw new Error();
+    if (claims.exp - claims.iat > 3600) throw lifetimeError();
     if (claims.nbf > now / 1000 + 60) throw new AuthError('SESSION_CLOCK_SKEW', 'Session time is ahead of the local clock. Synchronize system time and check issuer clock configuration before retrying login.');
     if (!allowExpired && bundle.expiresAt <= now) throw new AuthError('SESSION_EXPIRED', 'The browser access token has expired. Check system time and issuer lifetime configuration; run nansen login if renewal cannot recover.');
   } catch (error) {
@@ -158,7 +160,8 @@ export async function pairDevice(client, { signal, onPending, onIssued, onBefore
         const bundle = { issuer: client.issuer, audience: client.audience, privateJwk: client.privateJwk, accessToken: tokens.access_token, refreshToken: tokens.refresh_token, scope: tokens.scope };
         // Retain cleanup authority even if the rest of the issuance is malformed.
         onIssued?.(bundle);
-        if (tokens.token_type !== 'Bearer' || !Number.isFinite(tokens.expires_in) || tokens.expires_in <= 0 || tokens.expires_in > 3600) throw new AuthError('PAIRING_FAILED', 'Invalid token response. Run nansen login again.');
+        if (tokens.token_type !== 'Bearer' || !Number.isFinite(tokens.expires_in) || tokens.expires_in <= 0) throw new AuthError('PAIRING_FAILED', 'Invalid token response. Run nansen login again.');
+        if (tokens.expires_in > 3600) throw lifetimeError();
         let exp;
         try { exp = JSON.parse(Buffer.from(tokens.access_token.split('.')[1], 'base64url')).exp * 1000; } catch { /* validation below */ }
         if (!Number.isFinite(exp)) throw new AuthError('PAIRING_FAILED', 'Invalid token response. Run nansen login again.');
@@ -226,7 +229,8 @@ export async function refreshSession(bundle, { signal, now = Date.now, fetchFn =
     throw uncertain();
   }
   try {
-    if (data.token_type !== 'Bearer' || !Number.isFinite(data.expires_in) || data.expires_in <= 0 || data.expires_in > 3600 || data.refresh_token === bundle.refreshToken || data.access_token === bundle.accessToken) throw new Error();
+    if (data.token_type !== 'Bearer' || !Number.isFinite(data.expires_in) || data.expires_in <= 0 || data.refresh_token === bundle.refreshToken || data.access_token === bundle.accessToken) throw new Error();
+    if (data.expires_in > 3600) throw lifetimeError();
     const exp = JSON.parse(Buffer.from(data.access_token.split('.')[1], 'base64url')).exp * 1000;
     const replacement = { ...bundle, accessToken: data.access_token, refreshToken: data.refresh_token, expiresAt: Math.min(started + data.expires_in * 1000, exp) };
     validateSession(replacement, now());

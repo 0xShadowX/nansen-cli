@@ -12,12 +12,12 @@ afterEach(async () => {
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
 async function kill(child) { const done = once(child, 'exit'); child.kill('SIGKILL'); await done; }
-function server() {
-  const now = Date.now(); const old = sessionFixture({ now: now - 3590000, padding: 'x'.repeat(3000) });
+function server(local = false, lifetime = 3600) {
+  const now = Date.now(); const old = sessionFixture({ now: now - 3590000, padding: 'x'.repeat(3000), ...(local && { audience: 'http://localhost:54321' }) });
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'refresh-process-')); roots.push(root);
   const consumed = new Map(), revokes = [], access = []; let accepts = 0, lost = false;
   async function worker() {
-    const child = fork(fileURLToPath(new URL('./fixtures/auth-refresh-worker.js', import.meta.url)), [], { stdio: ['ignore', 'pipe', 'pipe', 'ipc'], env: { PATH: process.env.PATH, NODE_NO_WARNINGS: '1', NANSEN_NO_TELEMETRY: '1' } }); children.push(child);
+    const child = fork(fileURLToPath(new URL('./fixtures/auth-refresh-worker.js', import.meta.url)), [], { execArgv: ['--require', fileURLToPath(new URL('./fixtures/network-guard.cjs', import.meta.url)), '--import', fileURLToPath(new URL('./fixtures/local-issuer-register.js', import.meta.url))], stdio: ['ignore', 'pipe', 'pipe', 'ipc'], env: { PATH: process.env.PATH, NODE_NO_WARNINGS: '1', NANSEN_NO_TELEMETRY: '1' } }); children.push(child);
     let seq = 0, barrierResolve; const pending = new Map(), barriers = [];
     child.stderr.resume(); child.stdout.resume();
     child.on('message', message => {
@@ -32,8 +32,8 @@ function server() {
           else if (consumed.has(token)) { status = 401; body = { error: 'invalid_refresh_token' }; consumed.set(token, consumed.get(token) + 1); }
           else {
             consumed.set(token, 1); accepts++;
-            const next = issuedFixture(old.privateJwk, { now, padding: 'x'.repeat(3000) });
-            body = { access_token: next.accessToken, refresh_token: `child-${accepts}`, token_type: 'Bearer', expires_in: 3600 };
+            const next = issuedFixture(old.privateJwk, { now, audience: old.audience, padding: 'x'.repeat(3000) });
+            body = { access_token: next.accessToken, refresh_token: `child-${accepts}`, token_type: 'Bearer', expires_in: lifetime };
           }
         } else { access.push(message.headers); body = { user_id: 'account-B', credits_remaining: 0 }; }
         child.send({ action: 'response', id: message.id, status, body, headers, lost: lost && message.url.endsWith('/token/refresh') && status === 200 }); return;
@@ -102,8 +102,8 @@ it('SIGKILL after logout tombstone preserves detached rotation retirement author
   expect(s.revokes).toEqual([s.old.refreshToken]); expect(fs.readdirSync(path.join(s.root, 'synthetic-store'))).toEqual([]);
 });
 
-it('real Node/Undici lookup refusal remains retryable in a fresh healthy process', async () => {
-  const s = server(), a = await s.worker(); await a.call('seed', { bundle: s.old }); await a.call('select');
+it('real Node/Undici loopback lookup refusal remains retryable in a fresh healthy process', async () => {
+  const s = server(true), a = await s.worker(); await a.call('seed', { bundle: s.old }); await a.call('select');
   await a.call('dns-failure');
   expect((await a.call('account')).error?.code).toBe('SESSION_REFRESH_RETRYABLE');
   const config = JSON.parse(fs.readFileSync(path.join(s.root, 'config.json')));
@@ -130,4 +130,13 @@ it('fresh-child logout under hidden-target corruption deselects and retains auth
   fs.writeFileSync(journal, valid); await kill(b.child);
   const c = await s.worker(); expect((await c.call('logout')).error).toBeUndefined();
   expect(s.revokes).toEqual(['child-1']); expect(fs.readdirSync(path.join(s.root, 'synthetic-store'))).toEqual([]);
+});
+
+it('over-ceiling renewal remains setup-blocked after a real process restart with parent cleanup authority', async () => {
+  const s = server(false, 3601), a = await s.worker(); await a.call('seed', { bundle: s.old }); await a.call('select');
+  expect((await a.call('account')).error.code).toBe('BROWSER_SESSION_SETUP_REQUIRED'); await kill(a.child);
+  const b = await s.worker(); await b.call('select');
+  expect((await b.call('account')).error.code).toBe('BROWSER_SESSION_SETUP_REQUIRED');
+  expect(s.consumed.get(s.old.refreshToken)).toBe(1); expect(s.revokes).toEqual([]);
+  expect((await b.call('logout')).error).toBeUndefined(); expect(s.revokes).toEqual([s.old.refreshToken]);
 });
