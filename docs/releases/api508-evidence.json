@@ -4,7 +4,7 @@
   "source": {
     "api508Head": null,
     "api508HeadNote": "Fill from reviewed PR head; this document cannot hash its own containing commit.",
-    "cliDependency": "8f9085b8035291a40babd7cea48252cb26333d64",
+    "cliDependency": "a25bc511f53379ad619eb18b994311b78c2e86bb",
     "cliAuthBase": "294a51130b98acd89e283d765f7088b1d6fb290d",
     "api505ContractHead": "9190ae3decbba98c7513dbaa47695394ccd4515f",
     "api505SourceEquivalentFinalHead": "bcbae999ba3e8a59ec56fd145832ff34319e541f",
@@ -123,6 +123,62 @@
       "sourceHead": "d59c2420b24e4e93d819c3f983cbade6f2af0c1b",
       "kind": "root onboarding verification",
       "limits": "158 focused tests and eight original artifact hashes checked; not this repair head or release acceptance."
+    },
+    {
+      "artifact": "API-507-final-root-verification.md",
+      "sha256": "1180733191f15c7973c200bce9e735d8ca608247ff17df5901d6cac2a1edf32b",
+      "sourceHead": "a25bc511f53379ad619eb18b994311b78c2e86bb",
+      "kind": "root final dependency verification",
+      "limits": "133 focused each Node20.20.2/24.21.0; actual native Mac/Linux and 11 synthetic joint cases. No approval or rollout."
+    },
+    {
+      "artifact": "api507-root-a25bc51-node20-focused.log",
+      "sha256": "366ed77bc88b85d5515a9ba685c308419050ff5107ecefa3f4b2ca9fe3d4a70c",
+      "sourceHead": "a25bc511f53379ad619eb18b994311b78c2e86bb",
+      "kind": "Node20 focused tests",
+      "limits": "133 local guarded cases, not live classifier or arbitrary future runtimes."
+    },
+    {
+      "artifact": "api507-root-a25bc51-node24-focused.log",
+      "sha256": "3e5ce98630632d6d892a9befb3a8e1f5653be1bdb6879210ddcd050ca01a7203",
+      "sourceHead": "a25bc511f53379ad619eb18b994311b78c2e86bb",
+      "kind": "Node24 focused tests",
+      "limits": "133 local guarded cases, not live classifier or arbitrary future runtimes."
+    },
+    {
+      "artifact": "api507-native-renewal-a25bc51-result.json",
+      "sha256": "a741793ad23759a40df4250ff2f9e601ee8240faee43397b1eb8efdf0bbb9ad2",
+      "sourceHead": "a25bc511f53379ad619eb18b994311b78c2e86bb",
+      "kind": "macOS native renewal",
+      "limits": "10295-byte synthetic bundle; nonce/one rotation/fresh-process read/stubbed retirement/cleanup. No live issuer, OS login, daemon cancellation or candidate package."
+    },
+    {
+      "artifact": "linux-native-refresh-a25bc51-result.json",
+      "sha256": "b00c985985c37b7ca8138c11108a01c39391ba12fb86960e9e2ad2e77c86e8f8",
+      "sourceHead": "a25bc511f53379ad619eb18b994311b78c2e86bb",
+      "kind": "isolated Debian12/GNOME42.1 native renewal",
+      "limits": "10295-byte synthetic bundle; locked refusal80ms, daemon restart/read and stubbed retirement/cleanup. No Windows, desktop/PAM/reboot or candidate package."
+    },
+    {
+      "artifact": "joint-cli-refresh-api-9190-a25bc51-dpop-result.json",
+      "sha256": "ca2e3b81632ac6c49580ecbd0d5c0b06dbaaa4ce9088f5cc553bfaec4a14ee4d",
+      "sourceHead": "a25bc511f53379ad619eb18b994311b78c2e86bb",
+      "kind": "synthetic public CLI/API integration",
+      "limits": "11 CLIa25/API9190 cases; original-key ES256 signatures and tamper rejection, one rotation. Issuer/storage/gateway/ledger fixtures, not live or native proof."
+    },
+    {
+      "artifact": "API-507-final-repair-handoff.md",
+      "sha256": "849e23c84ae5923ed4de1e9de5d3f2cf7308c865495f85b757a73d01ab5f1154",
+      "sourceHead": "a25bc511f53379ad619eb18b994311b78c2e86bb",
+      "kind": "final dependency writer handoff",
+      "limits": "Writer3378 passed/9 skipped,126 focused Node22.23.2; independent review and root proof separate."
+    },
+    {
+      "artifact": "API-508-root-4f374e3-verification.md",
+      "sha256": "fca3c74d75a5f8fe0310e6f81b109130bb30b7decd8ef3085776cdfaae8135fd",
+      "sourceHead": "4f374e3a86885440d103f1b6d98cd9ac96c774db",
+      "kind": "root earlier onboarding repair verification",
+      "limits": "161 focused cases and source/artifact hashes at4f374e3, not final merged head or release acceptance."
     }
   ],
   "candidate": {
@@ -174,17 +230,17 @@
     "operatorCommandRecord": null
   },
   "frozenDependencyVerification": {
-    "sourceHead": "8f9085b8035291a40babd7cea48252cb26333d64",
+    "sourceHead": "a25bc511f53379ad619eb18b994311b78c2e86bb",
     "nativeRenewal": [
-      "api507-native-renewal-8f9085b-result.json",
-      "linux-native-refresh-8f9085b-result.json"
+      "api507-native-renewal-a25bc51-result.json",
+      "linux-native-refresh-a25bc51-result.json"
     ],
-    "jointWithDpop": "joint-cli-refresh-api-9190-8f9085b-dpop-result.json",
-    "pendingRepairedDependency": null,
-    "limits": "Current repair stays on frozen8f. Root will supply a later repaired API507 head for reconciliation before reviewer B. Requires rerun or bounded source equivalence then; final candidate/package native gate remains null."
+    "jointWithDpop": "joint-cli-refresh-api-9190-a25bc51-dpop-result.json",
+    "reconciliation": "Exact dependency merged with API508 history preserved; auth implementation unchanged from dependency. Independent API508 final-head review pending.",
+    "limits": "Root final dependency proof only. Candidate/package native, live/cohort/recovery acceptance remains null. Historical records retain original heads and hashes."
   },
   "acceptanceNotes": {
-    "exactHeadNativeRenewal": "Final candidate/package proof, not frozen dependency proof. See frozenDependencyVerification for completed8f evidence.",
+    "exactHeadNativeRenewal": "Final candidate/package proof, not frozen dependency proof. See frozenDependencyVerification for completed a25bc511 evidence.",
     "fullSessionAccessTokenInvalidation": "Required before rollout: actual logout invalidates original, rotated and copied tokens for that session; other sessions/accounts/API keys unaffected. Refresh-only retirement or natural expiry does not satisfy this gate.",
     "measuredRevocationPropagationAndDurability": "Deployed issuer/gateway/API observed rejection, measured propagation, restart/outage fail-closed behavior and durable retained feed/anchors; recorded/pending receipt is not observed rejection."
   }

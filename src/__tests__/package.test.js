@@ -47,7 +47,7 @@ describe('Package Integrity', () => {
     // (not just slow) rather than failing, so nothing short of avoiding it
     // keeps this test from hanging the whole CI job.
     execSync('npm init -y', { cwd: tmpDir, stdio: 'ignore', env: childEnv });
-    execSync(`npm install --omit=optional --no-audit --no-fund "${tgzPath}"`, { cwd: tmpDir, stdio: 'ignore', env: childEnv });
+    execSync(`npm install --omit=optional --no-audit --no-fund --fetch-retries=0 --fetch-timeout=15000 "${tgzPath}"`, { cwd: tmpDir, stdio: 'pipe', timeout: 45000, env: { ...childEnv, NANSEN_TEST_PACKAGE_INSTALL: '1' } });
 
     const packageRoot = join(tmpDir, 'node_modules/nansen-cli');
     const result = execFileSync(process.execPath, [join(packageRoot, 'src/index.js'), '--help'], { cwd: tmpDir, encoding: 'utf8', env: childEnv });

@@ -1,12 +1,16 @@
 // Test-only child command driver and persistent synthetic secret store.
 import fs from 'node:fs';
 import path from 'node:path';
-import { createAuthState } from '../../auth-state.js';
-import { createAuthStore } from '../../auth-store.js';
-import { refreshSession } from '../../auth-device.js';
-import { resolveCredential } from '../../auth-credentials.js';
-import { NansenAPI } from '../../api.js';
-import { buildCommands } from '../../cli.js';
+import dns from 'node:dns';
+const nativeFetch = globalThis.fetch;
+globalThis.fetch = async () => { throw new Error('Unintercepted child fetch'); };
+const { createAuthState } = await import('../../auth-state.js');
+const { createAuthStore } = await import('../../auth-store.js');
+const { refreshSession } = await import('../../auth-device.js');
+const { resolveCredential } = await import('../../auth-credentials.js');
+const { NansenAPI } = await import('../../api.js');
+const { buildCommands } = await import('../../cli.js');
+let dnsFailure = false;
 let state, selection, directory, target, resume, attempt, time;
 const responses = new Map(); let sequence = 0;
 async function barrier(phase, file) {
@@ -16,6 +20,10 @@ async function barrier(phase, file) {
   }
 }
 async function transport(url, options) {
+  if (dnsFailure && url.endsWith('/token/refresh')) {
+    if (new URL(url).origin !== 'http://localhost:54321') throw new Error('Native fixture requires loopback');
+    return nativeFetch(url, options);
+  }
   const id = ++sequence;
   process.send({ event: 'request', id, url, method: options.method, headers: options.headers, body: options.body });
   const reply = await new Promise((resolve, reject) => {
@@ -45,6 +53,13 @@ process.on('message', async message => {
         retire: async bundle => { process.send({ event: 'retire', token: bundle.refreshToken }); return { remote: 'recorded_pending' }; },
       });
       globalThis.fetch = transport;
+    } else if (message.action === 'dns-failure') {
+      dnsFailure = true;
+      // Native lifecycle, loopback fixture only; preload independently blocks all production hosts.
+      dns.lookup = (hostname, options, callback) => {
+        if (typeof options === 'function') callback = options;
+        callback(Object.assign(new Error('synthetic lookup failure'), { code: 'ENOTFOUND', syscall: 'getaddrinfo', hostname, errno: -3008 }));
+      };
     } else if (message.action === 'seed') {
       const a = await state.begin(); await state.install(a, { bundle: message.bundle, baseUrl: message.bundle.audience }); await state.finish(a);
     } else if (message.action === 'select') {

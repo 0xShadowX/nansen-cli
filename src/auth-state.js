@@ -9,6 +9,10 @@ import { refreshSession, retireSession, validateSession } from './auth-device.js
 const queues = new Map();
 const recognizedJournal = name => /^[a-f0-9-]{36}\.json$/.test(name);
 const journalError = () => new AuthError('AUTH_JOURNAL_INVALID', 'Authentication recovery cannot safely read auth-operations. Preserve its files and secure-store entries. Stop all CLI authentication processes, restore only a known-valid journal backup for this state, or contact support using docs/browser-login.md#damaged-or-unrecognized-journals.');
+const journalExists = file => {
+  try { return Boolean(fs.lstatSync(file, { throwIfNoEntry: false })); }
+  catch { throw journalError(); }
+};
 const stateError = () => new AuthError('AUTH_STATE_INVALID', 'Saved authentication cannot be read safely. Repair config.json permissions or restore the file; no other credential was selected.');
 function safePath(file, directory = false) {
   if (!fs.existsSync(file)) return;
@@ -27,11 +31,12 @@ function readJournal(file, id) {
       if (value.version !== 2 || value.id !== value.selectionEpoch || !uuid(value.selectionEpoch) ||
           !uuid(value.sourceGeneration) || !uuid(value.targetGeneration) || value.sourceGeneration === value.targetGeneration ||
           !['in_flight', 'ready', 'blocked', 'retryable', 'retired'].includes(value.phase) ||
-          (value.phase === 'blocked' ? !['uncertain', 'rejected'].includes(value.reason) : value.reason !== undefined) ||
+          (value.phase === 'blocked' ? !['uncertain', 'rejected', 'setup', 'clock', 'expired', 'protocol'].includes(value.reason) : value.reason !== undefined) ||
           (value.phase === 'retryable' ? !Number.isFinite(value.retryNotBefore) || value.retryNotBefore < 0 : value.retryNotBefore !== undefined) ||
           (value.phase === 'retired' ? !['unconfirmed', 'recorded_pending', 'refresh_only'].includes(value.remote) : value.remote !== undefined) ||
           Object.keys(value).some(k => !['version', 'id', 'kind', 'selectionEpoch', 'sourceGeneration', 'targetGeneration', 'phase', 'reason', 'retryNotBefore', 'remote'].includes(k))) throw journalError();
     } else if (value.kind !== undefined || value.version !== undefined || !Array.isArray(value.generations) || value.generations.length > 2 || value.generations.some(g => !uuid(g)) ||
+        (value.blockedBy !== undefined && (!uuid(value.blockedBy) || value.blockedBy === value.id)) ||
         (value.unissued !== undefined && typeof value.unissued !== 'boolean') || (value.candidateRemote !== undefined && !['unconfirmed', 'recorded_pending', 'refresh_only'].includes(value.candidateRemote))) throw journalError();
     return value;
   } catch { throw journalError(); }
@@ -42,7 +47,7 @@ export function renewalStatus(directory, selection) {
     if (!uuid(selection.selectionEpoch)) return 'metadata_unreadable';
     const file = path.join(directory, 'auth-operations', `${selection.selectionEpoch}.json`);
     safePath(directory, true); safePath(path.dirname(file), true);
-    if (!fs.existsSync(file)) return 'not_recorded';
+    if (!journalExists(file)) return 'not_recorded';
     const journal = readJournal(file, selection.selectionEpoch);
     if (journal.kind !== 'rotation') return 'metadata_unreadable';
     return { in_flight: 'pending_or_uncertain', ready: 'ready_local_recovery', blocked: 'login_required', retryable: 'retryable' }[journal.phase] || 'metadata_unreadable';
@@ -170,6 +175,9 @@ export function createAuthState({ directory = authDirectory(), store = createAut
   }
   async function cleanJournal(journal, config) {
     if (journal.kind === 'rotation') return cleanRotation(journal, config);
+    // Deselection retained this known source while damaged metadata may hide
+    // another generation. Never discharge it ahead of that journal.
+    if (journal.blockedBy && journalExists(journalPath(journal.blockedBy))) return [{ local: 'incomplete', remote: 'unconfirmed', code: 'AUTH_JOURNAL_INVALID' }];
     const activeRotation = config.auth?.active?.kind === 'session' ? rotationFor(config) : null;
     const outcomes = [];
     const pending = [];
@@ -227,7 +235,7 @@ export function createAuthState({ directory = authDirectory(), store = createAut
   }
   function rotationFor(config) {
     const epoch = config.auth?.selectionEpoch;
-    if (!uuid(epoch) || !fs.existsSync(journalPath(epoch))) return null;
+    if (!uuid(epoch) || !journalExists(journalPath(epoch))) return null;
     const journal = readJournal(journalPath(epoch), epoch);
     if (journal.kind !== 'rotation' || config.auth.version !== 2 || config.auth.active.kind !== 'session' || ![journal.sourceGeneration, journal.targetGeneration].includes(config.auth.active.generation)) throw stateError();
     return journal;
@@ -236,7 +244,12 @@ export function createAuthState({ directory = authDirectory(), store = createAut
     const active = config.auth?.active;
     if (active?.kind !== 'session' || config.auth.selectionEpoch !== selection.selectionEpoch || ['accountId', 'issuer', 'audience'].some(k => active[k] !== selection[k])) throw new AuthError('AUTH_SELECTION_CHANGED', 'Saved authentication changed. Run the command again.');
   }
+  const blockedReason = error => ({ SESSION_REFRESH_REJECTED: 'rejected', BROWSER_SESSION_SETUP_REQUIRED: 'setup', SESSION_CLOCK_SKEW: 'clock', SESSION_EXPIRED: 'expired', SESSION_REFRESH_PROTOCOL_ERROR: 'protocol' }[error.code] || 'uncertain');
   function renewalError(reason) {
+    if (reason === 'setup') return new AuthError('BROWSER_SESSION_SETUP_REQUIRED', 'The renewed session has incompatible issuer setup. Ask the operator to verify the supported 3600-second lifetime, SESSION_ACCESS_REVOCATION_ENABLED and BROWSER_SESSION_ACCOUNT_ENABLED. Renewal may have consumed the credential; do not retry it. Pair again only after server setup is repaired.');
+    if (reason === 'clock') return new AuthError('SESSION_CLOCK_SKEW', 'The renewed session is ahead of the local clock. Synchronize system time, then run nansen login. The possibly consumed refresh credential will not be retried.');
+    if (reason === 'expired') return new AuthError('SESSION_EXPIRED', 'The renewed access token was already expired. Check system time and issuer configuration, then run nansen login. The possibly consumed refresh credential will not be retried.');
+    if (reason === 'protocol') return new AuthError('SESSION_REFRESH_PROTOCOL_ERROR', 'The issuer rejected the refresh request format. Check CLI/issuer compatibility with the operator before running nansen login. The request will not be retried.');
     return reason === 'rejected' ? new AuthError('SESSION_REFRESH_REJECTED', 'The saved session cannot be renewed. Run: nansen login.') : new AuthError('SESSION_RENEWAL_UNCERTAIN', 'Session renewal outcome is unknown. Run: nansen login. The saved refresh credential was not retried.');
   }
   async function readBundle(generation, active) {
@@ -265,7 +278,7 @@ export function createAuthState({ directory = authDirectory(), store = createAut
       // An inaccessible store is not evidence that the response was lost.
       if (!error.missing && error.code === 'AUTH_STORE_UNAVAILABLE') throw error;
       if (operationSignal.aborted) throw operationSignal.reason;
-      await atomic(journalPath(journal.id), { ...journal, phase: 'blocked', reason: 'uncertain' });
+      await atomic(journalPath(journal.id), { ...journal, phase: 'blocked', reason: blockedReason(error) });
       return;
     }
     const source = await readBundle(journal.sourceGeneration, config.auth.active);
@@ -375,13 +388,22 @@ export function createAuthState({ directory = authDirectory(), store = createAut
         const config = read();
         const old = config.auth?.active;
         const id = randomUUID();
-        if (old?.kind === 'session' && !rotationFor(config)) await atomic(journalPath(id), { id, generations: [old.generation] });
+        let damagedRotation;
+        if (old?.kind === 'session') {
+          let rotation;
+          try { rotation = rotationFor(config); }
+          catch (error) {
+            if (!['AUTH_JOURNAL_INVALID', 'AUTH_STATE_INVALID'].includes(error.code)) throw error;
+            damagedRotation = error.code;
+          }
+          if (!rotation) await atomic(journalPath(id), { id, generations: [old.generation], ...(damagedRotation && { blockedBy: config.auth.selectionEpoch }) });
+        }
         const next = { ...config, auth: { version: config.auth?.version || 1, selectionEpoch: randomUUID(), active: { kind: 'none' } } };
         delete next.apiKey;
         try { await atomic(configFile, next); }
         catch (error) { if (read().auth?.selectionEpoch !== next.auth.selectionEpoch) throw error; }
         let cleanup;
-        try { await barrier('logout-committed'); cleanup = await recover(); }
+        try { await barrier('logout-committed'); cleanup = damagedRotation ? [{ local: 'incomplete', remote: 'unconfirmed', code: damagedRotation }] : await recover(); }
         catch (error) { cleanup = [{ local: 'incomplete', remote: 'unconfirmed', ...(error.code === 'AUTH_JOURNAL_INVALID' && { code: error.code }) }]; }
         return { removed: Boolean(config.apiKey || old?.kind === 'session'), cleanup };
       });
@@ -391,6 +413,8 @@ export function createAuthState({ directory = authDirectory(), store = createAut
       return locked(async () => {
         let config = read();
         assertSelection(config, selection);
+        // Validate the prospective format before any typed path or mutation.
+        if (!validAuthPointer({ ...config.auth, version: 2 })) throw stateError();
         let journal = rotationFor(config);
         if (journal) await recoverSelectedRotation(journal, config);
         config = read();
@@ -428,7 +452,7 @@ export function createAuthState({ directory = authDirectory(), store = createAut
         try { replacement = await refresh(bundle, { ...options(), now }); }
         catch (error) {
           const phase = error.code === 'SESSION_REFRESH_RETRYABLE' ? 'retryable' : 'blocked';
-          const next = { ...journal, phase, ...(phase === 'retryable' ? { retryNotBefore: error.retryNotBefore } : { reason: error.code === 'SESSION_REFRESH_REJECTED' ? 'rejected' : 'uncertain' }) };
+          const next = { ...journal, phase, ...(phase === 'retryable' ? { retryNotBefore: error.retryNotBefore } : { reason: blockedReason(error) }) };
           await atomic(journalPath(journal.id), next);
           if (phase === 'retryable') throw new AuthError('SESSION_REFRESH_RETRYABLE', 'Session renewal was refused before rotation. Check system time and retry later.');
           throw renewalError(next.reason);
