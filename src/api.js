@@ -145,7 +145,7 @@ export class NansenError extends Error {
 export const SERVER_CODE_MAP = {
   // Request validation (400 / 422)
   missing_field: ErrorCode.MISSING_PARAM,
-  unknown_field: ErrorCode.UNSUPPORTED_FILTER,
+  unknown_field: ErrorCode.INVALID_PARAMS,
   invalid_field_value: ErrorCode.INVALID_PARAMS,
   invalid_address_format: ErrorCode.INVALID_ADDRESS,
   invalid_date_format: ErrorCode.INVALID_PARAMS,

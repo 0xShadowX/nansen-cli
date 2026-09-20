@@ -341,7 +341,7 @@ nansen research smart-money netflow --chain solana --fields token_symbol,net_flo
 | `SERVER_ERROR` | Not your fault. Quote `details.requestId` when reporting it. |
 | `COMMAND_UNAVAILABLE` | The command is no longer available. For points leaderboard, run `nansen research` to explore other analytics commands. |
 
-Every code documented on the API's [error-handling page](https://docs.nansen.ai/getting-started/error-handling) maps onto one of the CLI codes above; a code the CLI does not recognise is passed through unchanged.
+Every code documented on the API's [error-handling page](https://docs.nansen.ai/getting-started/error-handling) maps onto a stable CLI error code; a code the CLI does not recognise is passed through unchanged.
 
 **Error metadata.** When the API reports them, `details` carries:
 

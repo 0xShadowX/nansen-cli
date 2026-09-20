@@ -18,7 +18,7 @@ import { NansenAPI, ErrorCode, SERVER_CODE_MAP, statusToErrorCode } from '../api
 // the divergence test below.
 const DOCUMENTED_SERVER_CODES = [
   ['missing_field', 422, ErrorCode.MISSING_PARAM],
-  ['unknown_field', 422, ErrorCode.UNSUPPORTED_FILTER],
+  ['unknown_field', 422, ErrorCode.INVALID_PARAMS],
   ['invalid_field_value', 422, ErrorCode.INVALID_PARAMS],
   ['invalid_address_format', 422, ErrorCode.INVALID_ADDRESS],
   ['invalid_date_format', 422, ErrorCode.INVALID_PARAMS],
@@ -215,12 +215,21 @@ describe('NansenAPI.request with structured server errors', () => {
     expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 
-  it('adds the unsupported-filter hint for unknown_field', async () => {
+  it('preserves the API remediation for unknown_field', async () => {
     mockFetch.mockResolvedValue(errorResponse(422, 'unknown_field', "Field 'only_smart_money' is not recognized"));
     const thrown = await capture(new NansenAPI('test-key', 'https://api.nansen.ai'));
 
+    expect(thrown.code).toBe(ErrorCode.INVALID_PARAMS);
+    expect(thrown.message).toBe("Field 'only_smart_money' is not recognized");
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('retains the unsupported-filter hint for the legacy server code', async () => {
+    mockFetch.mockResolvedValue(errorResponse(422, 'unsupported_filter', 'Filter is unavailable'));
+    const thrown = await capture(new NansenAPI('test-key', 'https://api.nansen.ai'));
+
     expect(thrown.code).toBe(ErrorCode.UNSUPPORTED_FILTER);
-    expect(thrown.message).toContain('This filter is not supported for this token/chain combination. Do not retry.');
+    expect(thrown.message).toBe('Filter is unavailable. This filter is not supported for this token/chain combination. Do not retry.');
     expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 

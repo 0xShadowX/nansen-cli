@@ -510,6 +510,10 @@ export const USAGE_ERROR_CODES = new Set(['MISSING_PARAM', 'MISSING_ARGS']);
 
 export function isUsageError(errorData, { pretty, table, csv, stream, isTTY }) {
   if (!USAGE_ERROR_CODES.has(errorData.code)) return false;
+  // API errors can map onto the same semantic code (for example the server's
+  // `missing_field` becomes MISSING_PARAM), but they are not local usage
+  // banners and must retain the structured envelope in every output mode.
+  if (errorData.status != null) return false;
   if (pretty || table || csv || stream) return false;
   return !!isTTY;
 }
