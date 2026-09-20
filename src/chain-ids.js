@@ -19,7 +19,6 @@ export const EVM_CHAIN_IDS = {
   avalanche: 43114,
   bnb: 56,
   linea: 59144,
-  scroll: 534352,
   mantle: 5000,
 };
 

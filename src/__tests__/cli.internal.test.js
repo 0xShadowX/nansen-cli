@@ -39,7 +39,7 @@ import {
   validateAlertData,
 } from '../commands/alerts.js';
 import { getCachedResponse, setCachedResponse, clearCache, getCacheDir, NansenError, ErrorCode, computeIdentityDigest } from '../api.js';
-import { EVM_CHAINS } from '../chain-ids.js';
+import { EVM_CHAINS, EVM_CHAIN_IDS } from '../chain-ids.js';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -3516,6 +3516,12 @@ describe('SCHEMA', () => {
   it('schema.json chains should be a superset of EVM_CHAINS', () => {
     for (const chain of EVM_CHAINS) {
       expect(SCHEMA.chains, `EVM_CHAINS has "${chain}" but schema.json does not`).toContain(chain);
+    }
+  });
+
+  it('EVM transfer chain IDs should only contain recognized EVM chains', () => {
+    for (const chain of Object.keys(EVM_CHAIN_IDS)) {
+      expect(EVM_CHAINS, `EVM_CHAIN_IDS has orphaned "${chain}"`).toContain(chain);
     }
   });
 
