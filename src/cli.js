@@ -1142,14 +1142,9 @@ export function buildCommands(deps = {}) {
             throw new NansenError('At least one query is required. Usage: nansen web search "bitcoin price" --num-results 5', ErrorCode.MISSING_PARAM);
           }
           let numResults;
-          if (options['num-results'] !== undefined) {
-            const numResultsRaw = parseInt(options['num-results'], 10);
-            if (Number.isNaN(numResultsRaw)) {
-              // Non-numeric — fall back to API default
-              numResults = undefined;
-            } else if (numResultsRaw >= 1 && numResultsRaw <= 20) {
-              numResults = numResultsRaw;
-            } else {
+          if (options['num-results'] !== undefined || flags['num-results']) {
+            numResults = parseSafeIntegerOption('num-results', options, flags, undefined, 'whole number between 1 and 20');
+            if (numResults < 1 || numResults > 20) {
               throw new NansenError('--num-results must be between 1 and 20', ErrorCode.INVALID_PARAMS);
             }
           }
