@@ -10,7 +10,7 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'fs';
 import path from 'path';
-import { HELP } from '../cli.js';
+import { buildCommands, HELP } from '../cli.js';
 import { buildWalletCommands, WALLET_SUBCOMMANDS } from '../wallet.js';
 
 const repoRoot = path.resolve(process.cwd());
@@ -67,6 +67,19 @@ function readmeGroupList(group) {
   return [...listPart.matchAll(/`([a-z][a-z0-9-]*)`/g)].map(m => m[1]);
 }
 
+/**
+ * The top-level `perp` command combines its trading schema with analytics that
+ * live under `research.perp` in schema.json. Read that combined surface from
+ * the runtime help instead of duplicating the two analytics aliases here.
+ */
+async function perpRuntimeNames() {
+  const output = [];
+  const commands = buildCommands({ log: line => output.push(line) });
+  await commands.perp(['help'], null, {}, {});
+  return [...output.join('\n').matchAll(/^ {2}([a-z][a-z0-9-]*)\s{2,}/gm)]
+    .map(match => match[1]);
+}
+
 describe('help banner covers the real command surface', () => {
   it('gives every command group in the schema a line in the banner', () => {
     const lines = helpCommandLines();
@@ -86,10 +99,11 @@ describe('help banner covers the real command surface', () => {
     }
   });
 
-  it('does not advertise a subcommand that no longer exists', () => {
+  it('does not advertise a subcommand that no longer exists', async () => {
     const lines = helpCommandLines();
     for (const [group, definition] of Object.entries(schema.commands)) {
       const subcommands = Object.keys(definition.subcommands || {});
+      if (group === 'perp') subcommands.push(...await perpRuntimeNames());
       if (!subcommands.length) continue;
       for (const name of listedNames(lines[group] ?? '')) {
         expect(
@@ -98,6 +112,13 @@ describe('help banner covers the real command surface', () => {
         ).toBe(true);
       }
     }
+  });
+
+  it('names every command shown by the combined `nansen perp help` surface', async () => {
+    const runtimeNames = await perpRuntimeNames();
+    const listed = nameTokens(helpCommandLines().perp ?? '');
+    const missing = runtimeNames.filter(name => !listed.has(name));
+    expect(missing, `--help line for "perp" does not mention: ${missing.join(', ')}`).toEqual([]);
   });
 });
 

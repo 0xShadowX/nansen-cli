@@ -912,7 +912,7 @@ USAGE: nansen <command> [subcommand] [options]
 COMMANDS:
   trade       DEX swaps/bridges: quote, execute, bridge-status, limit-order
   bridge      Hyperliquid bridge: quote, execute, status (EVM <-> HL)
-  perp        Hyperliquid perps: order, cancel, close, leverage, transfer, approve-builder-fee, positions, orders, account, meta
+  perp        Hyperliquid perps: order, cancel, close, leverage, transfer, approve-builder-fee, positions, orders, account, meta, screener, leaderboard
   research    analytics: smart-money, profiler, token, search, perp, portfolio
   wallet      ${WALLET_SUBCOMMANDS.join(', ')}
   agent       Ask the Nansen AI research agent (fast/expert modes)
@@ -954,7 +954,7 @@ EXAMPLES:
   nansen research profiler balance --address 0x... --chain ethereum
 
 DEPRECATED ALIASES (still work, will be removed in a future version):
-  smart-money, profiler, token, search, perp, portfolio → use "nansen research <command>"
+  smart-money, profiler, token, search, portfolio → use "nansen research <command>"
   quote, execute → use "nansen trade <command>"
 
 Research chains: ethereum, solana, base, bnb, arbitrum, polygon, optimism, avalanche, linea, scroll, mantle, ronin, sei, plasma, sonic, monad, hyperevm, iotaevm
@@ -1971,7 +1971,7 @@ SUBCOMMANDS:
   account     View account state (balance, equity, margin, spot)
   meta        View available assets
   screener    Perp market screener (analytics)
-  leaderboard Perp trader leaderboard (analytics)
+  leaderboard  Perp trader leaderboard (analytics)
 
 USAGE:
   nansen perp order --coin BTC --side buy --size 0.001 --price 50000 --type limit
