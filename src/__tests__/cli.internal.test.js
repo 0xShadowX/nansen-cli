@@ -5468,6 +5468,38 @@ describe('compareWallets', () => {
     expect(result.shared_tokens).toEqual(['0xabcd']);
   });
 
+  it('should throw the first recorded failure when every request fails, whichever it is', async () => {
+    const mockApi = {
+      addressCounterparties: vi.fn()
+        .mockRejectedValueOnce(new NansenError('Rate limited', ErrorCode.RATE_LIMITED, 429))
+        .mockRejectedValueOnce(new NansenError('Invalid API key', ErrorCode.UNAUTHORIZED, 401)),
+      addressBalance: vi.fn().mockRejectedValue(new NansenError('Invalid API key', ErrorCode.UNAUTHORIZED, 401)),
+    };
+
+    await expect(compareWallets(mockApi, {
+      addresses: ['0x0000000000000000000000000000000000000001', '0x0000000000000000000000000000000000000002'],
+      chain: 'ethereum',
+      delayMs: 0,
+    })).rejects.toMatchObject({ code: ErrorCode.RATE_LIMITED, status: 429 });
+  });
+
+  it('should match symbols case-insensitively in the fallback and report each token once', async () => {
+    const mockApi = {
+      addressCounterparties: vi.fn().mockResolvedValue({ counterparties: [] }),
+      addressBalance: vi.fn()
+        .mockResolvedValueOnce({ balances: [{ token_symbol: 'USDC', value_usd: 1 }, { token_symbol: 'usdc', value_usd: 1 }] })
+        .mockResolvedValueOnce({ balances: [{ token_symbol: 'usdc', value_usd: 1 }] }),
+    };
+
+    const result = await compareWallets(mockApi, {
+      addresses: ['0x0000000000000000000000000000000000000001', '0x0000000000000000000000000000000000000002'],
+      chain: 'ethereum',
+      delayMs: 0,
+    });
+
+    expect(result.shared_tokens).toEqual(['USDC']);
+  });
+
   it('should fall back to the symbol when neither side reports a token address', async () => {
     const mockApi = {
       addressCounterparties: vi.fn().mockResolvedValue({ counterparties: [] }),

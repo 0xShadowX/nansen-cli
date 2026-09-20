@@ -868,13 +868,15 @@ export async function compareWallets(api, params = {}) {
     [addr1, 'balance', bal1], [addr2, 'balance', bal2],
   ];
   const errors = [];
+  const failures = [];
   for (const [address, source, outcome] of outcomes) {
     if (outcome.error) {
+      failures.push(outcome.error);
       errors.push({ address, source, code: outcome.error.code ?? 'UNKNOWN', message: outcome.error.message });
     }
   }
-  if (errors.length === outcomes.length) {
-    throw cp1.error;
+  if (failures.length === outcomes.length) {
+    throw failures[0];
   }
 
   // Extract counterparty addresses
@@ -906,26 +908,27 @@ export async function compareWallets(api, params = {}) {
       const address = t.token_address || t.mint || t.address;
       return address ? String(address).toLowerCase() : null;
     };
+    const symbolOf = (t) => (t.token_symbol ? String(t.token_symbol).toLowerCase() : null);
     const addresses2 = new Set(tokens2.map(addressOf).filter(Boolean));
-    const symbols2 = new Set(tokens2.map(t => t.token_symbol).filter(Boolean));
+    const symbols2 = new Set(tokens2.map(symbolOf).filter(Boolean));
     const symbolsWithoutAddress2 = new Set(
-      tokens2.filter(t => !addressOf(t)).map(t => t.token_symbol).filter(Boolean)
+      tokens2.filter(t => !addressOf(t)).map(symbolOf).filter(Boolean)
     );
     const seen = new Set();
     sharedTokens = [];
     for (const t of tokens1) {
       const address = addressOf(t);
-      const symbol = t.token_symbol;
+      const symbol = symbolOf(t);
       // With an address on both sides only the address counts. If either
       // side omits it (as some responses do for the native asset) a matching
       // symbol is taken as the same token.
       const matched = address
         ? addresses2.has(address) || (symbol && symbolsWithoutAddress2.has(symbol))
         : symbol && symbols2.has(symbol);
-      const label = symbol || address;
-      if (matched && label && !seen.has(label)) {
-        seen.add(label);
-        sharedTokens.push(label);
+      const key = address || symbol;
+      if (matched && !seen.has(key)) {
+        seen.add(key);
+        sharedTokens.push(t.token_symbol || address);
       }
     }
   }
