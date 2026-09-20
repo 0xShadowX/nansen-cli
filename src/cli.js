@@ -863,16 +863,17 @@ export async function compareWallets(api, params = {}) {
     settle(api.addressBalance({ address: addr2, chain })),
   ]);
 
-  const errors = [];
-  for (const [address, source, outcome] of [
+  const outcomes = [
     [addr1, 'counterparties', cp1], [addr2, 'counterparties', cp2],
     [addr1, 'balance', bal1], [addr2, 'balance', bal2],
-  ]) {
+  ];
+  const errors = [];
+  for (const [address, source, outcome] of outcomes) {
     if (outcome.error) {
       errors.push({ address, source, code: outcome.error.code ?? 'UNKNOWN', message: outcome.error.message });
     }
   }
-  if (errors.length === 4) {
+  if (errors.length === outcomes.length) {
     throw cp1.error;
   }
 
