@@ -940,7 +940,7 @@ export class NansenAPI {
         const retryAfterMs = parseRetryAfter(stringHeader(response, 'retry-after'));
         const error = new NansenError(
           `Invalid response from API (status ${response.status})`,
-          response.status >= 500 ? ErrorCode.SERVER_ERROR : ErrorCode.UNKNOWN,
+          statusToErrorCode(response.status, {}),
           response.status,
           {
             body: rawBody,

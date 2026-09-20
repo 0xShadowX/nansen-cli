@@ -3323,6 +3323,34 @@ describe('NansenAPI', () => {
         vi.useRealTimers();
       });
 
+      it('gives a plain-text 429 the same error code as a JSON one', async () => {
+        if (LIVE_TEST) return;
+        mockFetch.mockImplementation(async () => realResponse('rate limited', 429, { 'content-type': 'text/plain' }));
+        const noRetry = new NansenAPI('test-api-key', 'https://api.nansen.ai', { retry: { maxRetries: 0 } });
+
+        const thrownError = await noRetry.smartMoneyNetflow({}).catch(e => e);
+
+        expect(thrownError.status).toBe(429);
+        expect(thrownError.code).toBe(ErrorCode.RATE_LIMITED);
+        expect(thrownError.details.body).toBe('rate limited');
+      });
+
+      it('falls back to body: null when no content type is declared and json() has consumed the body', async () => {
+        if (LIVE_TEST) return;
+        // Without a content type the body is read with json() first, which
+        // consumes it on a real Response; the text() fallback then fails and
+        // the error is reported without a body rather than crashing.
+        // A byte body gets no default content-type (a string body would get text/plain).
+        mockFetch.mockImplementation(async () => new Response(new TextEncoder().encode('<html>502</html>'), { status: 502 }));
+        const noRetry = new NansenAPI('test-api-key', 'https://api.nansen.ai', { retry: { maxRetries: 0 } });
+
+        const thrownError = await noRetry.smartMoneyNetflow({}).catch(e => e);
+
+        expect(thrownError.status).toBe(502);
+        expect(thrownError.code).toBe(ErrorCode.SERVER_ERROR);
+        expect(thrownError.details.body).toBeNull();
+      });
+
       it('does not retry a plain-text 4xx that is not in retryOnStatus', async () => {
         if (LIVE_TEST) return;
         mockFetch.mockImplementation(async () => realResponse('bad request', 400, { 'content-type': 'text/plain' }));
