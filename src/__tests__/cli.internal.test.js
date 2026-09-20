@@ -7,6 +7,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   parseArgs,
+  resolveBooleanOption,
   formatValue,
   formatTable,
   formatOutput,
@@ -38,8 +39,8 @@ import {
   buildAlertsCommands,
   validateAlertData,
 } from '../commands/alerts.js';
-import { getCachedResponse, setCachedResponse, clearCache, getCacheDir, NansenError, ErrorCode, computeIdentityDigest } from '../api.js';
-import { EVM_CHAINS } from '../chain-ids.js';
+import { getCachedResponse, setCachedResponse, clearCache, getCacheDir, NansenError, ErrorCode, computeIdentityDigest, COUNTERPARTIES_BATCH_CHAINS } from '../api.js';
+import { EVM_CHAINS, EVM_CHAIN_IDS } from '../chain-ids.js';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -68,6 +69,28 @@ describe('parseArgs', () => {
   it('should parse JSON options', () => {
     const result = parseArgs(['--filters', '{"only_smart_money":true}']);
     expect(result.options.filters).toEqual({ only_smart_money: true });
+  });
+
+  it('should keep true/false/null option values as strings instead of JSON keywords', () => {
+    const result = parseArgs(['--sort', 'true', '--search', 'false', '--label', 'null']);
+    expect(result.options).toEqual({ sort: 'true', search: 'false', label: 'null' });
+    expect(result.flags).toEqual({});
+  });
+
+  it('should keep true/false/null as strings inside repeated options too', () => {
+    const result = parseArgs(['--token', 'true', '--token', '0xabc:base']);
+    expect(result.options.token).toEqual(['true', '0xabc:base']);
+  });
+
+  it('should still parse object and array option values as JSON', () => {
+    const result = parseArgs(['--filters', '{}', '--order-by', '[{"field":"x"}]']);
+    expect(result.options.filters).toEqual({});
+    expect(result.options['order-by']).toEqual([{ field: 'x' }]);
+  });
+
+  it('should keep numeric option values as strings exactly as before', () => {
+    const result = parseArgs(['--limit', '10', '--amount', '1000000000000000000000', '--slippage', '0.5', '--days', '-7']);
+    expect(result.options).toEqual({ limit: '10', amount: '1000000000000000000000', slippage: '0.5', days: '-7' });
   });
 
   it('should handle mixed args', () => {
@@ -139,6 +162,35 @@ describe('parseArgs', () => {
       expect(result.options[flag]).toBeUndefined();
       expect(result._).toEqual(['trade', 'execute', '1708900000000-abc123']);
     }
+  });
+});
+
+describe('resolveBooleanOption', () => {
+  const resolve = (argv, key = 'premium-labels') => {
+    const { flags, options } = parseArgs(argv);
+    return resolveBooleanOption(options, flags, key);
+  };
+
+  it('treats a bare --flag as true', () => {
+    expect(resolve(['--premium-labels'])).toBe(true);
+    expect(resolve(['--premium-labels', '--chain', 'solana'])).toBe(true);
+  });
+
+  it('treats --flag true as true', () => {
+    expect(resolve(['--premium-labels', 'true'])).toBe(true);
+    expect(resolve(['--premium-labels', 'TRUE'])).toBe(true);
+    expect(resolve(['--premium-labels', '1'])).toBe(true);
+  });
+
+  it('treats --flag false as false', () => {
+    expect(resolve(['--premium-labels', 'false'])).toBe(false);
+    expect(resolve(['--premium-labels', 'False'])).toBe(false);
+    expect(resolve(['--premium-labels', '0'])).toBe(false);
+  });
+
+  it('returns undefined when the option is absent', () => {
+    expect(resolve([])).toBeUndefined();
+    expect(resolve(['--chain', 'solana'])).toBeUndefined();
   });
 });
 
@@ -1762,6 +1814,34 @@ describe('formatOutput', () => {
     expect(result.type).toBe('error');
     expect(result.text).toBe('Error: Oops');
   });
+
+  it('should keep code, status and details as key/value lines in table mode', () => {
+    const envelope = formatError(new NansenError('Rate limited', ErrorCode.RATE_LIMITED, 429, { rateLimit: { resetSeconds: 30 } }));
+    const result = formatOutput(envelope, { table: true });
+    expect(result.type).toBe('error');
+    expect(result.text.split('\n')).toEqual([
+      'Error: Rate limited',
+      'code: RATE_LIMITED',
+      'status: 429',
+      'details: {"rateLimit":{"resetSeconds":30}}',
+    ]);
+  });
+
+  it('should omit null fields from table error output', () => {
+    const envelope = formatError(new NansenError('Bad input', ErrorCode.INVALID_PARAMS));
+    const result = formatOutput(envelope, { table: true });
+    expect(result.text).toBe('Error: Bad input\ncode: INVALID_PARAMS');
+  });
+
+  it('should render the error envelope as a CSV header and row in csv mode', () => {
+    const envelope = formatError(new NansenError('Rate limited', ErrorCode.RATE_LIMITED, 429, { rateLimit: { resetSeconds: 30 } }));
+    const result = formatOutput(envelope, { csv: true });
+    expect(result.type).toBe('error');
+    expect(result.text.split('\n')).toEqual([
+      'success,error,code,status,details',
+      'false,Rate limited,RATE_LIMITED,429,"{""rateLimit"":{""resetSeconds"":30}}"',
+    ]);
+  });
 });
 
 describe('formatError', () => {
@@ -1872,6 +1952,22 @@ describe('parseSort', () => {
   it('should default to DESC when direction not specified', () => {
     const result = parseSort('timestamp', undefined);
     expect(result).toEqual([{ field: 'timestamp', direction: 'DESC' }]);
+  });
+
+  it('should treat the words true/false/null as literal field names', () => {
+    expect(parseSort('true', undefined)).toEqual([{ field: 'true', direction: 'DESC' }]);
+    expect(parseSort('false', undefined)).toEqual([{ field: 'false', direction: 'DESC' }]);
+    expect(parseSort('null:asc', undefined)).toEqual([{ field: 'null', direction: 'ASC' }]);
+  });
+
+  it('should reject a non-string value with an actionable error instead of a TypeError', () => {
+    for (const bad of [true, ['a', 'b'], { field: 'x' }]) {
+      let error;
+      try { parseSort(bad, undefined); } catch (e) { error = e; }
+      expect(error).toBeInstanceOf(NansenError);
+      expect(error.code).toBe(ErrorCode.INVALID_PARAMS);
+      expect(error.message).toBe('--sort must be "field" or "field:direction"');
+    }
   });
 });
 
@@ -2180,6 +2276,43 @@ describe('buildCommands', () => {
         orderBy: undefined,
         pagination: { page: 1, per_page: 10 }
       });
+    });
+
+    it('should preserve explicit false for --only-new-positions after parsing', async () => {
+      const mockApi = {
+        smartMoneyPerpTrades: vi.fn().mockResolvedValue({ data: [] })
+      };
+      const { _: args, flags, options } = parseArgs(['perp-trades', '--only-new-positions', 'false']);
+      await commands['smart-money'](args, mockApi, flags, options);
+
+      expect(mockApi.smartMoneyPerpTrades).toHaveBeenCalledWith(
+        expect.objectContaining({ onlyNewPositions: false })
+      );
+    });
+
+    it('should treat --sort true as a literal field name instead of crashing', async () => {
+      const mockApi = {
+        smartMoneyNetflow: vi.fn().mockResolvedValue({ data: [] })
+      };
+      const { _: args, flags, options } = parseArgs(['netflow', '--chain', 'solana', '--sort', 'true']);
+      await commands['smart-money'](args, mockApi, flags, options);
+
+      expect(mockApi.smartMoneyNetflow).toHaveBeenCalledWith(
+        expect.objectContaining({
+          chains: ['solana'],
+          orderBy: [{ field: 'true', direction: 'DESC' }],
+        })
+      );
+    });
+
+    it('should reject a repeated --sort instead of sending a joined field name', async () => {
+      const mockApi = {
+        smartMoneyNetflow: vi.fn().mockResolvedValue({ data: [] })
+      };
+      const { _: args, flags, options } = parseArgs(['netflow', '--sort', 'a', '--sort', 'b']);
+      await expect(commands['smart-money'](args, mockApi, flags, options))
+        .rejects.toThrow('--sort must be "field" or "field:direction"');
+      expect(mockApi.smartMoneyNetflow).not.toHaveBeenCalled();
     });
 
     it('should add smart money labels filter', async () => {
@@ -2518,6 +2651,18 @@ describe('buildCommands', () => {
             include_stablecoins: false
           })
         })
+      );
+    });
+
+    it('should preserve explicit false boolean option values after parsing', async () => {
+      const mockApi = {
+        tokenScreener: vi.fn().mockResolvedValue({ data: [] })
+      };
+      const { flags, options } = parseArgs(['--smart-money', 'false', '--include-stablecoins', 'false']);
+      await commands['token'](['screener'], mockApi, flags, options);
+
+      expect(mockApi.tokenScreener).toHaveBeenCalledWith(
+        expect.objectContaining({ filters: { include_stablecoins: false } })
       );
     });
 
@@ -3503,6 +3648,19 @@ describe('SCHEMA', () => {
   it('schema.json chains should be a superset of EVM_CHAINS', () => {
     for (const chain of EVM_CHAINS) {
       expect(SCHEMA.chains, `EVM_CHAINS has "${chain}" but schema.json does not`).toContain(chain);
+    }
+  });
+
+  it('EVM transfer chain IDs should only contain recognized EVM chains', () => {
+    for (const chain of Object.keys(EVM_CHAIN_IDS)) {
+      expect(EVM_CHAINS, `EVM_CHAIN_IDS has orphaned "${chain}"`).toContain(chain);
+    }
+  });
+
+  it('schema.json chains should cover the batch counterparties endpoint', () => {
+    for (const chain of COUNTERPARTIES_BATCH_CHAINS) {
+      if (chain === 'all') continue;
+      expect(SCHEMA.chains, `COUNTERPARTIES_BATCH_CHAINS has "${chain}" but schema.json does not`).toContain(chain);
     }
   });
 
@@ -5129,6 +5287,49 @@ describe('--format csv integration', () => {
     expect(lines[0]).toContain('symbol');
     expect(lines[1]).toContain('SOL');
     expect(lines[2]).toContain('ETH');
+  });
+});
+
+describe('rejected API call output in --table and --format csv', () => {
+  let outputs;
+  let exitCode;
+
+  const rejectingDeps = () => ({
+    output: (msg) => outputs.push(msg),
+    errorOutput: () => {},
+    exit: (code) => { exitCode = code; },
+    NansenAPIClass: function MockAPI() {
+      this.smartMoneyNetflow = vi.fn().mockRejectedValue(
+        new NansenError('Rate limited', ErrorCode.RATE_LIMITED, 429, { rateLimit: { resetSeconds: 30 } })
+      );
+    }
+  });
+
+  beforeEach(() => {
+    outputs = [];
+    exitCode = null;
+  });
+
+  it('keeps code and status in --table error output', async () => {
+    const result = await runCLI(['smart-money', 'netflow', '--table'], rejectingDeps());
+    expect(result.type).toBe('error');
+    expect(exitCode).toBe(1);
+    expect(outputs[0].split('\n')).toEqual([
+      'Error: Rate limited',
+      'code: RATE_LIMITED',
+      'status: 429',
+      'details: {"rateLimit":{"resetSeconds":30}}',
+    ]);
+  });
+
+  it('emits a parseable CSV error row for --format csv', async () => {
+    const result = await runCLI(['smart-money', 'netflow', '--format', 'csv'], rejectingDeps());
+    expect(result.type).toBe('error');
+    expect(exitCode).toBe(1);
+    expect(outputs[0].split('\n')).toEqual([
+      'success,error,code,status,details',
+      'false,Rate limited,RATE_LIMITED,429,"{""rateLimit"":{""resetSeconds"":30}}"',
+    ]);
   });
 });
 
