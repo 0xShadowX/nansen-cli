@@ -1,5 +1,23 @@
 # Changelog
 
+## 2.0.0
+
+### Major Changes
+
+- [#501](https://github.com/nansen-ai/nansen-cli/pull/501) [`5a79f9d`](https://github.com/nansen-ai/nansen-cli/commit/5a79f9db91aa3dab3d0e8b043172e5a3af418924) Thanks [@gulshngill](https://github.com/gulshngill)! - Guard `wallet export` against accidental plaintext key disclosure. The default output is now redacted (addresses only — no decryption, no password needed). Printing private keys to stdout requires explicit acknowledgement via `--reveal` (which also warns on stderr when stdout is an interactive terminal), and the new `--file <path>` writes keys to a file created with 0600 permissions (refusing to overwrite) while keeping stdout clean. Scripts that parsed `wallet export` output must add `--reveal` or switch to `--file`. `--file` failures carry machine-readable codes: `FILE_EXISTS` when the path already exists, `FILE_WRITE_FAILED` for any other create/write error.
+
+### Patch Changes
+
+- [#663](https://github.com/nansen-ai/nansen-cli/pull/663) [`bc4ecc8`](https://github.com/nansen-ai/nansen-cli/commit/bc4ecc82c4bfedfc66dbe621f96a581437bb415d) Thanks [@gulshngill](https://github.com/gulshngill)! - Option values that spell a JSON keyword (`--sort true`, `--search false`, `--label null`) are now kept as the literal strings `true`/`false`/`null` instead of being converted to a boolean or null, so string options no longer crash or silently drop the value; `--filters '{}'` and `--order-by '[...]'` still parse as JSON, and `--sort` now rejects a repeated or non-text value with `--sort must be "field" or "field:direction"`.
+
+- [#661](https://github.com/nansen-ai/nansen-cli/pull/661) [`fe5b294`](https://github.com/nansen-ai/nansen-cli/commit/fe5b294d30a8dc3e93270aead4a27a4b6513ce60) Thanks [@gulshngill](https://github.com/gulshngill)! - Recognise the API's full set of structured error codes. A 401 `unauthenticated` response once again shows `Not logged in. Run: nansen login`, `insufficient_credits` gets its do-not-retry hint, and codes that previously leaked through as raw server strings now surface as CLI codes, including the new `PLAN_UPGRADE_REQUIRED`, `GEO_BLOCKED`, `QUERY_TOO_LARGE`, `PAYLOAD_TOO_LARGE`, `METHOD_NOT_ALLOWED`, and `CONFLICT`. Retry behaviour is unchanged: it stays keyed on the HTTP status.
+
+- [#646](https://github.com/nansen-ai/nansen-cli/pull/646) [`3290e3c`](https://github.com/nansen-ai/nansen-cli/commit/3290e3cefa2c7c5e1405d09e4d5d860ca05d404f) Thanks [@gulshngill](https://github.com/gulshngill)! - `--table` and `--format csv` error output now includes the error `code`, HTTP `status`, and `details` instead of only the message. CSV errors are emitted as a header row plus one record; table errors keep the leading `Error:` line and add one `key: value` line per field.
+
+- [#662](https://github.com/nansen-ai/nansen-cli/pull/662) [`7fd923f`](https://github.com/nansen-ai/nansen-cli/commit/7fd923ff4d58128c19e6995e015af6093dee7586) Thanks [@gulshngill](https://github.com/gulshngill)! - Sync the `chains` list reported by `nansen schema` (and mirrored in `--help` and the README) with the chains the Nansen API actually accepts. Drops `scroll` and `ronin`, which no endpoint serves any more, and adds the chains that were missing: `algorand`, `aptos`, `arc`, `bitcoin`, `bitlayer`, `chiliz`, `citrea`, `gravity`, `hyperliquid`, `injective`, `mantra`, `near`, `robinhood`, `stacks`, `starknet`, `stellar`, `sui`, `ton`, `tron`, `viction`. Not every chain is served by every endpoint; the API still validates `--chain` per endpoint.
+
+- [#666](https://github.com/nansen-ai/nansen-cli/pull/666) [`6539558`](https://github.com/nansen-ai/nansen-cli/commit/65395584ab9844ec3f0117ef951b2eb26ff6342c) Thanks [@gulshngill](https://github.com/gulshngill)! - Make every wallet subcommand discoverable from the places agents look first. `nansen --help` now lists `send`, `forget-password` and `secure` on the wallet line (previously only seven of the nine were shown) and the full perp subcommand set (`transfer`, `approve-builder-fee`, `orders`, `account`, `meta`, `screener` and `leaderboard` were missing). It also stops describing the combined top-level `perp` command as a deprecated analytics alias. README lists the same wallet set, and `nansen schema wallet` now documents `forget-password` and `secure` with descriptions plus an example for every wallet subcommand. Help text, README, runtime command help and schema are pinned together by a new drift-guard test.
+
 ## 1.45.0
 
 ### Minor Changes
