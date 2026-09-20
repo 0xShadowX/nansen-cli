@@ -28,7 +28,7 @@ export function parseSort(sortOption, orderByOption) {
   if (typeof sortOption !== 'string') {
     throw new NansenError('--sort must be "field" or "field:direction"', ErrorCode.INVALID_PARAMS);
   }
-  const parts = String(sortOption).split(':');
+  const parts = sortOption.split(':');
   const field = parts[0];
   const direction = (parts[1] || 'desc').toUpperCase();
   return [{ field, direction }];
