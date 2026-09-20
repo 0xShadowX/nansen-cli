@@ -1,6 +1,6 @@
 # Browser login prerelease
 
-Earlier read-scope integration evidence exercised the API account contract at `9190ae3decbba98c7513dbaa47695394ccd4515f` with CLI `83d6f5d1e851e9da1f46902e3df93dd523bddedd` in ten synthetic selection/billing/error cases, and authservice device/revoke contract at `3e08f9e76a3fd785df9f641f640234e5a87e00a4`. That earlier evidence is historical and does not verify the revised nansen:api contract. Cross-service parity verification is still required. It does not establish staging acceptance or authorize publication. API505 gates account API access under the revised `nansen:api` contract, API507 adds renewal, and API508 owns normal-release promotion.
+Browser sessions need coordinated server admission, account permissions and revocation enforcement before cohort rollout. Cross-service parity and staging acceptance remain required. Automatic renewal and normal-release promotion ship separately.
 
 ## Commands and selection
 
@@ -94,3 +94,7 @@ Do not delete, rename away or quarantine these files merely to make login succee
 Live cancellation before the first token request, or after known pending/slow-down responses with no earlier ambiguity, can report no issued session. Any earlier network/5xx/unknown response, an in-flight request, lost response or process crash retains uncertainty. The durable marker is written before the first poll; subsequent already-durable calls avoid the global queue/lock. That optimization never clears the on-disk marker after pending. Auth telemetry uses only `/login` or `/logout`, allowed flag names and bounded error categories; positional codes, option values, arbitrary flag names and chain/hostname metadata are excluded from both success and failure.
 
 Trading quote, signed-transaction submission and bridge-status calls to `trading-api.nansen.ai` retain their existing credential-free transport. Limit orders retain their separately wallet-signed challenge/JWT flow; the existing optional environment `X-API-Key` header is not a browser-session export. No browser bearer is forwarded to that separate audience. Pasting a saved API key did not replace those wallet authorization requirements either. MCP install similarly provisions a separate integration key rather than reusing browser session custody.
+
+## Development evidence (historical)
+
+Earlier read-scope integration evidence exercised the API account contract at `9190ae3decbba98c7513dbaa47695394ccd4515f` with CLI `83d6f5d1e851e9da1f46902e3df93dd523bddedd` in ten synthetic selection/billing/error cases, and authservice device/revoke contract at `3e08f9e76a3fd785df9f641f640234e5a87e00a4`. That earlier evidence is historical and does not verify the revised nansen:api contract. Cross-service parity verification is still required. It does not establish staging acceptance or authorize publication. API505 gates account API access under the revised `nansen:api` contract, API507 adds renewal, and API508 owns normal-release promotion.

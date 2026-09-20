@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 export const DEFAULT_API_ORIGIN = 'https://api.nansen.ai';
@@ -8,7 +9,10 @@ export class AuthError extends Error {
   constructor(code, message) { super(message); this.code = code; }
 }
 export function authDirectory(env = process.env) {
-  return path.join(env.HOME || env.USERPROFILE || '', '.nansen');
+  let home = env.HOME || env.USERPROFILE;
+  try { home ||= os.homedir(); } catch { /* use the fixed actionable error below */ }
+  if (typeof home !== 'string' || !path.isAbsolute(home)) throw new AuthError('AUTH_HOME_UNAVAILABLE', 'Cannot locate an absolute home directory for authentication. Set HOME or USERPROFILE before using nansen.');
+  return path.join(home, '.nansen');
 }
 export function trustedIssuer(audience) {
   const issuer = {

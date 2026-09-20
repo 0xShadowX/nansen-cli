@@ -223,7 +223,8 @@ async function postSim(rpcUrl, auth, method, params, timeoutMs) {
       body: buildSimRpcBody(method, params),
       signal: controller.signal,
     });
-    if (hosted && auth.api && [401, 403].includes(res.status)) throw new AuthError('SIMULATION_ACCESS_DENIED', 'The selected account cannot access hosted simulation. Check account permissions or log in again.');
+    // Anonymous simulation outages retain the existing warn-and-proceed policy.
+    if (hosted && auth.api && auth.api.selection.kind !== 'anonymous' && [401, 403].includes(res.status)) throw new AuthError('SIMULATION_ACCESS_DENIED', 'The selected account cannot access hosted simulation. Check account permissions or log in again.');
     const text = await res.text();
     let body;
     try {
