@@ -194,15 +194,22 @@ export function parseArgs(args) {
       // string is a real value, and skipping it here left `""` dangling to be
       // picked up as a positional arg on the next iteration.
       } else if (next !== undefined && (!next.startsWith('-') || /^-\d/.test(next))) {
-        // Try to parse as JSON first (for objects/arrays/booleans),
-        // but keep numeric strings as strings to avoid precision loss
-        // and scientific notation for large integers (e.g. 1e+21).
-        let parsedValue;
+        // Try to parse as JSON so object/array options (`--filters '{}'`,
+        // `--order-by '[...]'`) arrive structured. Numbers stay strings to
+        // avoid precision loss and scientific notation for large integers
+        // (e.g. 1e+21). The bare keywords true/false/null stay strings too:
+        // no option takes a boolean or null *value*, so coercing them would
+        // silently retype a string option (`--sort true` used to become the
+        // boolean true). Boolean options read the strings 'true'/'false'
+        // through resolveBooleanOption().
+        let parsedValue = next;
         try {
           const parsed = JSON.parse(next);
-          parsedValue = typeof parsed === 'number' ? next : parsed;
+          if (typeof parsed !== 'number' && typeof parsed !== 'boolean' && parsed !== null) {
+            parsedValue = parsed;
+          }
         } catch {
-          parsedValue = next;
+          // Not JSON: keep the raw string.
         }
         i++;
         // Accumulate repeated options into arrays (supports repeatable flags like --token, --subject)
@@ -1436,7 +1443,7 @@ export function buildCommands(deps = {}) {
       const handlers = {
         'netflow': () => apiInstance.smartMoneyNetflow({ chains, filters, orderBy, pagination }),
         'dex-trades': () => apiInstance.smartMoneyDexTrades({ chains, filters, orderBy, pagination }),
-        'perp-trades': () => apiInstance.smartMoneyPerpTrades({ filters, orderBy, pagination, onlyNewPositions: options['only-new-positions'] ?? flags['only-new-positions'] }),
+        'perp-trades': () => apiInstance.smartMoneyPerpTrades({ filters, orderBy, pagination, onlyNewPositions: resolveBooleanOption(options, flags, 'only-new-positions') }),
         'holdings': () => apiInstance.smartMoneyHoldings({ chains, filters, orderBy, pagination }),
         'dcas': () => apiInstance.smartMoneyDcas({ filters, orderBy, pagination }),
         'historical-holdings': () => apiInstance.smartMoneyHistoricalHoldings({ chains, filters, orderBy, pagination, days }),
@@ -1602,13 +1609,13 @@ export function buildCommands(deps = {}) {
         : 30;
 
       // Convenience filter for smart money only
-      const onlySmartMoney = options['smart-money'] || flags['smart-money'] || false;
+      const onlySmartMoney = resolveBooleanOption(options, flags, 'smart-money') ?? false;
       if (onlySmartMoney) {
         filters.include_smart_money_labels = filters.include_smart_money_labels ||
           ['Fund', 'Smart Trader', '30D Smart Trader', '90D Smart Trader', '180D Smart Trader'];
       }
 
-      const includeStablecoins = options['include-stablecoins'] ?? flags['include-stablecoins'];
+      const includeStablecoins = resolveBooleanOption(options, flags, 'include-stablecoins');
       if (includeStablecoins !== undefined) {
         filters.include_stablecoins = includeStablecoins;
       }
