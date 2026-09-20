@@ -1,6 +1,6 @@
 # Browser login prerelease
 
-Earlier read-scope integration evidence exercised the API account contract at `9190ae3decbba98c7513dbaa47695394ccd4515f` with CLI `83d6f5d1e851e9da1f46902e3df93dd523bddedd` in ten synthetic selection/billing/error cases, and authservice device/revoke contract at `3e08f9e76a3fd785df9f641f640234e5a87e00a4`. That earlier evidence is historical and does not verify the revised nansen:api contract. Cross-service parity verification is still required. It does not establish staging acceptance or authorize publication. API505 gates account API access under the revised `nansen:api` contract, API507 adds renewal, and API508 owns normal-release promotion.
+Browser sessions need coordinated server admission, account permissions and revocation enforcement before cohort rollout. Cross-service parity and staging acceptance remain required. Automatic renewal and normal-release promotion ship separately.
 
 ## Commands and selection
 
@@ -132,3 +132,7 @@ Root verification at `ca675319a5cd0984e1d4160875b43414121d56ad` passed 75 focuse
 Trading quote, signed-transaction submission and bridge-status calls to `trading-api.nansen.ai` retain their existing credential-free transport. Limit orders retain their separately wallet-signed challenge/JWT flow; the existing optional environment `X-API-Key` header is not a browser-session export. No browser bearer is forwarded to that separate audience. Pasting a saved API key did not replace those wallet authorization requirements either. MCP install similarly provisions a separate integration key rather than reusing browser session custody.
 
 Automatic renewal preserves the exact `nansen:api` grant on stored bundles and access JWTs. It never upgrades an old `nansen:read` or unscoped session. Near expiry, smart alerts, account API calls and matching-origin hosted simulation acquire a rotated credential through the same owner. Simulation reacquires before its method fallback; foreign RPCs do not open custody or receive bearer credentials. Earlier read-scope native/joint evidence above is historical and is not permission-parity acceptance.
+
+## Development evidence (historical)
+
+Earlier read-scope integration evidence exercised the API account contract at `9190ae3decbba98c7513dbaa47695394ccd4515f` with CLI `83d6f5d1e851e9da1f46902e3df93dd523bddedd` in ten synthetic selection/billing/error cases, and authservice device/revoke contract at `3e08f9e76a3fd785df9f641f640234e5a87e00a4`. That earlier evidence is historical and does not verify the revised nansen:api contract. Cross-service parity verification is still required. It does not establish staging acceptance or authorize publication. API505 gates account API access under the revised `nansen:api` contract, API507 adds renewal, and API508 owns normal-release promotion.

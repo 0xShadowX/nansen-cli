@@ -17,8 +17,11 @@ afterEach(() => { vi.unstubAllGlobals(); SIMULATION_RPCS.base = original; for (c
 async function selected(kind, audience = 'https://api.nansen.ai') {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'auth-parity-')); dirs.push(home);
   const state = createAuthState({ directory: path.join(home, '.nansen'), store: createAuthStore(memoryOperation()), retire: async () => ({ remote: 'recorded_pending' }) });
-  const bundle = sessionFixture({ audience }); const a = await state.begin();
-  await state.install(a, kind === 'session' ? { bundle, baseUrl: audience } : { apiKey: 'synthetic-api-key', baseUrl: audience }); await state.finish(a);
+  const bundle = sessionFixture({ audience });
+  if (kind !== 'anonymous') {
+    const a = await state.begin();
+    await state.install(a, kind === 'session' ? { bundle, baseUrl: audience } : { apiKey: 'synthetic-api-key', baseUrl: audience }); await state.finish(a);
+  }
   return { state, bundle, api: new NansenAPI(undefined, audience, { credential: resolveCredential({ env: { HOME: home } }), authState: state, retry: { maxRetries: 0 } }) };
 }
 const sim = () => new Response(JSON.stringify({ result: [{ calls: [{ status: '0x1', logs: [] }] }] }));
@@ -87,4 +90,34 @@ it('matching staging simulation resolves the staging session and refuses an extr
   expect(fetch.mock.calls[0][1].headers.Authorization).toBe(`Bearer ${bundle.accessToken}`);
   await expect(simulateAssetChanges('base', { to: '0x2' }, { from: '0x1', api, apiKey: 'other-account' })).rejects.toMatchObject({ code: 'MIXED_CREDENTIALS' });
   expect(fetch).toHaveBeenCalledOnce();
+});
+
+it.each(['anonymous', 'api-key', 'session'].flatMap(kind => [401, 403].map(status => [kind, status])))('actual swap verification preserves %s behavior on hosted HTTP%s', async (kind, status) => {
+  const { api, state, bundle } = await selected(kind);
+  expect(api.selection.kind).toBe(kind);
+  const read = vi.spyOn(state, 'acquireSession');
+  const payment = vi.spyOn(api, '_x402Retry');
+  const fetch = vi.fn(async () => new Response(JSON.stringify({ message: 'synthetic denial' }), { status }));
+  vi.stubGlobal('fetch', fetch);
+  SIMULATION_RPCS.base = 'https://api.nansen.ai/api/v1/trade/simulate-swap';
+  const log = vi.fn();
+  const result = await verifySwapOutcome({ chain: 'base', from: '0x0000000000000000000000000000000000000001', quote: { transaction: { to: '0x0000000000000000000000000000000000000002', data: '0x' } }, quoteData: { request: {} }, api, log });
+  expect(fetch).toHaveBeenCalledOnce();
+  const [url, options] = fetch.mock.calls[0];
+  expect(url).toBe(SIMULATION_RPCS.base);
+  expect(options.headers).toEqual({ 'Content-Type': 'application/json', ...(kind === 'session' ? { Authorization: `Bearer ${bundle.accessToken}` } : kind === 'api-key' ? { apikey: 'synthetic-api-key' } : {}) });
+  expect(options.redirect).toBe(kind === 'anonymous' ? 'follow' : 'error');
+  expect(payment).not.toHaveBeenCalled();
+  if (kind === 'anonymous') {
+    expect(result).toEqual({ proceed: true });
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('proceeding without it'));
+    expect(log).toHaveBeenCalledWith(expect.stringContaining(`HTTP ${status}`));
+  } else {
+    expect(result).toEqual({ proceed: false, reason: 'The selected account cannot access hosted simulation. Check account permissions or log in again.' });
+    expect(log).not.toHaveBeenCalled();
+  }
+  if (kind !== 'session') expect(read).not.toHaveBeenCalled();
+  expect(JSON.stringify(fetch.mock.calls)).not.toContain(bundle.refreshToken);
+  expect(JSON.stringify(fetch.mock.calls)).not.toContain(bundle.privateJwk.d);
+  for (const secret of [bundle.accessToken, bundle.refreshToken, bundle.privateJwk.d, 'synthetic-api-key']) expect(JSON.stringify({ result, logs: log.mock.calls })).not.toContain(secret);
 });
