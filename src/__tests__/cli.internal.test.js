@@ -3308,6 +3308,10 @@ describe('parseSort with special characters', () => {
     }
   });
 
+  it('should quote the trimmed direction in the error message', () => {
+    expect(() => parseSort('field:  sideways  ', undefined)).toThrow('got "sideways"');
+  });
+
   it('should still accept a trailing colon as the default direction', () => {
     expect(parseSort('pnl_usd:', undefined)).toEqual([{ field: 'pnl_usd', direction: 'DESC' }]);
   });
