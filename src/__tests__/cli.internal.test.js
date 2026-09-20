@@ -2278,6 +2278,18 @@ describe('buildCommands', () => {
       });
     });
 
+    it('should preserve explicit false for --only-new-positions after parsing', async () => {
+      const mockApi = {
+        smartMoneyPerpTrades: vi.fn().mockResolvedValue({ data: [] })
+      };
+      const { _: args, flags, options } = parseArgs(['perp-trades', '--only-new-positions', 'false']);
+      await commands['smart-money'](args, mockApi, flags, options);
+
+      expect(mockApi.smartMoneyPerpTrades).toHaveBeenCalledWith(
+        expect.objectContaining({ onlyNewPositions: false })
+      );
+    });
+
     it('should treat --sort true as a literal field name instead of crashing', async () => {
       const mockApi = {
         smartMoneyNetflow: vi.fn().mockResolvedValue({ data: [] })
@@ -2639,6 +2651,18 @@ describe('buildCommands', () => {
             include_stablecoins: false
           })
         })
+      );
+    });
+
+    it('should preserve explicit false boolean option values after parsing', async () => {
+      const mockApi = {
+        tokenScreener: vi.fn().mockResolvedValue({ data: [] })
+      };
+      const { flags, options } = parseArgs(['--smart-money', 'false', '--include-stablecoins', 'false']);
+      await commands['token'](['screener'], mockApi, flags, options);
+
+      expect(mockApi.tokenScreener).toHaveBeenCalledWith(
+        expect.objectContaining({ filters: { include_stablecoins: false } })
       );
     });
 
