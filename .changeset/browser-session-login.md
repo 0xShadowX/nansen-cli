@@ -13,3 +13,5 @@ Keep cancellation cleanup conservative after ambiguous issuance, preserve damage
 First-party browser sessions request `nansen:api` for API-key-equivalent account permissions, including smart-alert CRUD and trading API operations under existing account/plan/endpoint checks. Read-scoped CLI sessions require fresh login; existing OAuth/MCP read grants are not broadened. Hosted swap simulation now uses the selected credential on the matching trusted API origin, without exposing it to third-party RPCs or granting wallet signing authority.
 
 Hosted simulation rejects selected-account authentication/authorization failures instead of degrading past them; wallet signing checks remain unchanged.
+
+Preserve anonymous hosted-simulation warn-and-proceed behavior on 401/403 while selected account credentials still fail closed. Resolve a missing home environment through the OS home directory, and refuse relative authentication storage paths.

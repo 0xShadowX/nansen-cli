@@ -4,13 +4,13 @@
   "source": {
     "api508Head": null,
     "api508HeadNote": "Fill from reviewed PR head; this document cannot hash its own containing commit.",
-    "cliDependency": "5e44ef0e79b7a8448e5af7dea76b533be468a3b6",
+    "cliDependency": "77efe0e4612eb1d5e2f357a4b753981519f7d98e",
     "cliAuthBase": "294a51130b98acd89e283d765f7088b1d6fb290d",
     "api505ContractHead": "9190ae3decbba98c7513dbaa47695394ccd4515f",
     "api505SourceEquivalentFinalHead": "bcbae999ba3e8a59ec56fd145832ff34319e541f",
     "issuerHead": "3ed027914e8834bc2f0ffef6752af65c46b9938d",
     "consumerHead": "2ad5702645c517e76a4530cdac1dc69d678e9807",
-    "apiPermissionParityHead": null,
+    "apiPermissionParityHead": "1d7bcc9efad02277554f563837450023b2c2a7f5",
     "historicalContractNote": "API50558-route source fields and all existing evidence records are historical read-scope proof, not the revised nansen:api contract or permission list."
   },
   "evidence": [
@@ -230,6 +230,13 @@
       "sourceHead": "956764b207fcc91498cea45c8ba91d70e31e538a",
       "kind": "root installed archive Debian/GNOME native lifecycle",
       "limits": "Same956 archive,10295-byte bundle, locked refusal76ms, daemon restart/read/stubbed cleanup. No Windows/desktop/PAM/reboot/daemon late-write acceptance."
+    },
+    {
+      "artifact": "../api503-permission-parity-20260920/cli658-a-repair-result.md",
+      "sha256": "bd942537965e4dfc352cbd12d552788bd9a566d88618630100151ceaeae474cd",
+      "sourceHead": "77efe0e4612eb1d5e2f357a4b753981519f7d98e",
+      "kind": "parent writer repair report",
+      "limits": "3413 passed/9skipped,109focused reported by parent writer; no final cross-stack, live, native or cohort acceptance."
     }
   ],
   "candidate": {
@@ -296,6 +303,21 @@
     "limits": "Root final dependency proof only. Candidate/package native, live/cohort/recovery acceptance remains null. Historical records retain original heads and hashes."
   },
   "frozenDependencyVerification": {
+    "sourceHead": "77efe0e4612eb1d5e2f357a4b753981519f7d98e",
+    "scope": "nansen:api",
+    "reportedLocalTests": {
+      "passed": 3413,
+      "skipped": 9,
+      "focused": 109
+    },
+    "limits": "Parent writer report only. No stacked main-only CI pass, live/native/platform acceptance or final cross-stack proof."
+  },
+  "permissionRevision": {
+    "contract": "Browser nansen:api uses API-key-equivalent account/API permissions, no browser route allowlist. Existing nansen:read semantics unchanged.",
+    "rollout": "Account-only and default-off non-account API admission remain separate. No deployment state inferred.",
+    "remaining": "API1967 1d7bcc9efad02277554f563837450023b2c2a7f5 has root-reported CI6511 passed/4skipped and clean A. Final cross-stack proof at repaired immutable heads remains root-pending; no rollout acceptance."
+  },
+  "priorPermissionDependencyVerification": {
     "sourceHead": "5e44ef0e79b7a8448e5af7dea76b533be468a3b6",
     "scope": "nansen:api",
     "reportedLocalTests": {
@@ -305,10 +327,5 @@
       "realChildCases": 17
     },
     "limits": "Parent writer local proof; no stacked main-only CI pass. Earlier native/joint/package records are historical. Full server route parity and exact revised candidate verification remain pending."
-  },
-  "permissionRevision": {
-    "contract": "Browser nansen:api uses API-key-equivalent account/API permissions, no browser route allowlist. Existing nansen:read semantics unchanged.",
-    "rollout": "Account-only and default-off non-account API admission remain separate. No deployment state inferred.",
-    "remaining": "Committed API1967 full-route parity head unavailable at initial inspection; cross-service and final candidate proof pending."
   }
 }
