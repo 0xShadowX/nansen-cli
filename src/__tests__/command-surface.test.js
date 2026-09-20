@@ -76,7 +76,8 @@ async function perpRuntimeNames() {
   const output = [];
   const commands = buildCommands({ log: line => output.push(line) });
   await commands.perp(['help'], null, {}, {});
-  return [...output.join('\n').matchAll(/^ {2}([a-z][a-z0-9-]*)\s{2,}/gm)]
+  const block = output.join('\n').split('SUBCOMMANDS:')[1].split('\n\n')[0];
+  return [...block.matchAll(/^ {2}([a-z][a-z0-9-]*)\s+/gm)]
     .map(match => match[1]);
 }
 

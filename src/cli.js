@@ -1971,7 +1971,7 @@ SUBCOMMANDS:
   account     View account state (balance, equity, margin, spot)
   meta        View available assets
   screener    Perp market screener (analytics)
-  leaderboard  Perp trader leaderboard (analytics)
+  leaderboard Perp trader leaderboard (analytics)
 
 USAGE:
   nansen perp order --coin BTC --side buy --size 0.001 --price 50000 --type limit
