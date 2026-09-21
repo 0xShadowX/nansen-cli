@@ -49,12 +49,20 @@ export const SCHEMA = { version: VERSION, ...schemaDefinition };
  * Returns true/false/undefined (undefined = not supplied).
  */
 export function resolveBooleanOption(options, flags, key) {
-  if (options[key] !== undefined) {
-    const val = String(options[key]).toLowerCase();
+  const optionValue = options[key];
+  const flagValue = flags[key];
+
+  if (Array.isArray(optionValue) || Array.isArray(flagValue) ||
+      (optionValue !== undefined && flagValue !== undefined)) {
+    throw new NansenError(`--${key} cannot be repeated`, ErrorCode.INVALID_PARAMS);
+  }
+  if (optionValue !== undefined) {
+    const val = String(optionValue).toLowerCase();
     if (val === 'true' || val === '1') return true;
     if (val === 'false' || val === '0') return false;
+    throw new NansenError(`--${key} must be true or false`, ErrorCode.INVALID_PARAMS);
   }
-  if (flags[key] !== undefined) return Boolean(flags[key]);
+  if (flagValue !== undefined) return Boolean(flagValue);
   return undefined;
 }
 
@@ -189,20 +197,46 @@ export const VALUELESS_FLAGS = new Set([
 
 export function parseArgs(args) {
   const result = { _: [], flags: {}, options: {} };
+
+  const addFlag = (key) => {
+    if (key in result.flags) {
+      if (!Array.isArray(result.flags[key])) result.flags[key] = [result.flags[key]];
+      result.flags[key].push(true);
+    } else {
+      result.flags[key] = true;
+    }
+  };
   
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     
     if (arg.startsWith('--')) {
-      const key = arg.slice(2);
-      const next = args[i + 1];
+      const equalsIndex = arg.indexOf('=');
+      const inlineKey = equalsIndex === -1 ? null : arg.slice(2, equalsIndex);
+      // `--help=false` is neither help nor a meaningful false value: valueless
+      // switches only accept their bare spelling. Reject it instead of leaking
+      // a stale `flags['help=false']` key that no handler will ever inspect.
+      if (inlineKey !== null && VALUELESS_FLAGS.has(inlineKey)) {
+        throw new NansenError(`--${inlineKey} does not accept a value`, ErrorCode.INVALID_PARAMS);
+      }
+      // Value-taking options, including boolean options handled by
+      // resolveBooleanOption(), accept the conventional `--key=value` spelling.
+      const hasInlineValue = inlineKey !== null;
+      const key = hasInlineValue ? inlineKey : arg.slice(2);
+      const next = hasInlineValue ? arg.slice(equalsIndex + 1) : args[i + 1];
       
       if (VALUELESS_FLAGS.has(key)) {
+        // Repeating a switch is idempotent. Keeping the value strictly true
+        // avoids leaking `[true, true]` into consumers that use `=== true`.
         result.flags[key] = true;
       // `next !== undefined` rather than a truthiness check: an explicit empty
       // string is a real value, and skipping it here left `""` dangling to be
       // picked up as a positional arg on the next iteration.
-      } else if (next !== undefined && (!next.startsWith('-') || /^-\d/.test(next))) {
+      // An inline value was explicitly supplied and is always consumed, even
+      // when it begins with a dash; downstream option validation owns whether
+      // that value is meaningful. The dash guard applies only to two-token
+      // input, where `--key --next` denotes two separate arguments.
+      } else if (hasInlineValue || (next !== undefined && (!next.startsWith('-') || /^-\d/.test(next)))) {
         // Try to parse as JSON so object/array options (`--filters '{}'`,
         // `--order-by '[...]'`) arrive structured. Numbers stay strings to
         // avoid precision loss and scientific notation for large integers
@@ -220,7 +254,7 @@ export function parseArgs(args) {
         } catch {
           // Not JSON: keep the raw string.
         }
-        i++;
+        if (!hasInlineValue) i++;
         // Accumulate repeated options into arrays (supports repeatable flags like --token, --subject)
         if (key in result.options) {
           if (!Array.isArray(result.options[key])) {
@@ -231,10 +265,10 @@ export function parseArgs(args) {
           result.options[key] = parsedValue;
         }
       } else {
-        result.flags[key] = true;
+        addFlag(key);
       }
     } else if (arg.startsWith('-')) {
-      result.flags[arg.slice(1)] = true;
+      addFlag(arg.slice(1));
     } else {
       result._.push(arg);
     }
@@ -1400,8 +1434,10 @@ export function buildCommands(deps = {}) {
         // silently comparing as if it were version 0.0.0, which would show
         // every entry rather than flag the typo.
         if (!/^v?\d+(\.\d+){0,2}$/.test(String(since))) {
-          log(`Invalid --since value "${since}": expected a version like 1.43 or 1.43.0.`);
-          return;
+          throw new NansenError(
+            `Invalid --since value "${since}": expected a version like 1.43 or 1.43.0.`,
+            ErrorCode.INVALID_PARAMS
+          );
         }
         // Show only entries from the given version onwards
         const lines = content.split('\n');
@@ -2105,7 +2141,16 @@ export const RESEARCH_CATEGORY_ALIASES = {
 
 // Generate help text for a specific subcommand using SCHEMA
 export function generateSubcommandHelp(command, subcommand, prefix = null) {
-  const cmdSchema = SCHEMA.commands[command] || SCHEMA.commands.research.subcommands[command];
+  // `perp` is both a top-level trading command and a research category, and
+  // the two have different subcommands. Look in both places and use whichever
+  // actually holds this subcommand (top-level wins when both do) instead of
+  // stopping at the first schema whose *name* matches — that made
+  // `research perp screener --help` fall back to listing the category's
+  // subcommands, i.e. telling the caller to run the command they just ran.
+  const topSchema = SCHEMA.commands[command];
+  const researchSchema = SCHEMA.commands.research.subcommands[command];
+  const fromResearch = !topSchema?.subcommands?.[subcommand] && Boolean(researchSchema?.subcommands?.[subcommand]);
+  const cmdSchema = fromResearch ? researchSchema : topSchema || researchSchema;
   if (!cmdSchema) return null;
 
   const subSchema = cmdSchema.subcommands?.[subcommand];
@@ -2136,7 +2181,7 @@ export function generateSubcommandHelp(command, subcommand, prefix = null) {
 
   const exampleValues = { address: '0x...', token: '0x...', query: '"term"', symbol: 'BTC', date: '2024-01-01' };
   const chain = subSchema.options?.chain?.default || 'solana';
-  const cmdPrefix = prefix || (DEPRECATED_TO_RESEARCH.has(command) ? `research ${command}` : command);
+  const cmdPrefix = prefix || (fromResearch || DEPRECATED_TO_RESEARCH.has(command) ? `research ${command}` : command);
   let example = subSchema.examples?.[0] || `nansen ${cmdPrefix} ${subcommand}`;
   if (!subSchema.examples?.length && subSchema.options) {
     for (const [name, opt] of Object.entries(subSchema.options)) {
@@ -2164,7 +2209,16 @@ export async function runCLI(rawArgs, deps = {}) {
     isTTY = process.stdout.isTTY,
   } = deps;
 
-  const { _: positional, flags, options } = parseArgs(rawArgs);
+  let parsed;
+  try {
+    parsed = parseArgs(rawArgs);
+  } catch (error) {
+    const errorData = formatError(error);
+    output(formatOutput(errorData).text);
+    exit(1);
+    return { type: 'error', data: errorData };
+  }
+  const { _: positional, flags, options } = parsed;
 
   // Resolve command aliases
   const rawCommand = positional[0] || 'help';

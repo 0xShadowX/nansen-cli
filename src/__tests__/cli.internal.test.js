@@ -107,6 +107,27 @@ describe('parseArgs', () => {
     expect(result.flags.help).toBe(true);
   });
 
+  it('rejects inline values for valueless flags instead of creating stale flag names', () => {
+    for (const arg of ['--help=false', '--pretty=true', '--no-cache=1', '--help=']) {
+      expect(() => parseArgs([arg])).toThrowError(
+        expect.objectContaining({ code: 'INVALID_PARAMS' })
+      );
+    }
+  });
+
+  it('always consumes an explicitly inline value even when it starts with a dash', () => {
+    const result = parseArgs(['changelog', '--since=--bad']);
+    expect(result._).toEqual(['changelog']);
+    expect(result.options.since).toBe('--bad');
+    expect(result.flags.since).toBeUndefined();
+  });
+
+  it('keeps repeated valueless flags strictly boolean and idempotent', () => {
+    const result = parseArgs(['--help', '--help', '--pretty', '--pretty']);
+    expect(result.flags.help).toBe(true);
+    expect(result.flags.pretty).toBe(true);
+  });
+
   it('should handle flag followed by another flag', () => {
     const result = parseArgs(['--verbose', '--debug']);
     expect(result.flags.verbose).toBe(true);
@@ -4380,13 +4401,17 @@ describe('changelog command --since', () => {
   }
 
   it('rejects a non-numeric --since value with a clear error instead of silently matching nothing', async () => {
-    const out = await runChangelog({ since: 'abc' });
-    expect(out).toBe('Invalid --since value "abc": expected a version like 1.43 or 1.43.0.');
+    await expect(runChangelog({ since: 'abc' })).rejects.toMatchObject({
+      code: 'INVALID_PARAMS',
+      message: 'Invalid --since value "abc": expected a version like 1.43 or 1.43.0.',
+    });
   });
 
   it('rejects a malformed --since value like "1.2.3.4"', async () => {
-    const out = await runChangelog({ since: '1.2.3.4' });
-    expect(out).toContain('Invalid --since value "1.2.3.4"');
+    await expect(runChangelog({ since: '1.2.3.4' })).rejects.toMatchObject({
+      code: 'INVALID_PARAMS',
+      message: 'Invalid --since value "1.2.3.4": expected a version like 1.43 or 1.43.0.',
+    });
   });
 
   it('a --since value missing the patch component reads as .0, not as always-less-than-everything (regression for the "1.43 vs 1.43.1" bug)', async () => {
