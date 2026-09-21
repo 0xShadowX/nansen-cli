@@ -3954,13 +3954,17 @@ describe('changelog command --since', () => {
   }
 
   it('rejects a non-numeric --since value with a clear error instead of silently matching nothing', async () => {
-    const out = await runChangelog({ since: 'abc' });
-    expect(out).toBe('Invalid --since value "abc": expected a version like 1.43 or 1.43.0.');
+    await expect(runChangelog({ since: 'abc' })).rejects.toMatchObject({
+      code: 'INVALID_PARAMS',
+      message: 'Invalid --since value "abc": expected a version like 1.43 or 1.43.0.',
+    });
   });
 
   it('rejects a malformed --since value like "1.2.3.4"', async () => {
-    const out = await runChangelog({ since: '1.2.3.4' });
-    expect(out).toContain('Invalid --since value "1.2.3.4"');
+    await expect(runChangelog({ since: '1.2.3.4' })).rejects.toMatchObject({
+      code: 'INVALID_PARAMS',
+      message: 'Invalid --since value "1.2.3.4": expected a version like 1.43 or 1.43.0.',
+    });
   });
 
   it('a --since value missing the patch component reads as .0, not as always-less-than-everything (regression for the "1.43 vs 1.43.1" bug)', async () => {
