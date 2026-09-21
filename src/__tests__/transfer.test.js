@@ -16,6 +16,7 @@ import {
   validateSolanaAddress,
   bigIntToHex,
   buildUnsignedSolanaTransaction,
+  getTokenInfo,
 } from '../transfer.js';
 import { signSecp256k1, rlpEncode } from '../crypto.js';
 import { base58Encode } from '../wallet.js';
@@ -607,6 +608,22 @@ describe('sendTokens integration', () => {
 
       const sendCall = fetch.mock.calls.find(c => JSON.parse(c[1].body).method === 'eth_sendRawTransaction');
       expect(sendCall).toBeUndefined();
+    });
+
+    test('tags RPC errors that mean the transaction cannot succeed, from the raw message', async () => {
+      const cases = [
+        ['insufficient funds for gas * price + value', true],
+        ['execution reverted: ERC20: transfer amount exceeds balance', true],
+        ['Transaction results in an account with insufficient lamports', true],
+        ['internal error: node is syncing', false],
+        ['nonce too low', false],
+      ];
+      for (const [message, expected] of cases) {
+        fetch.mockImplementation(async () => ({ json: () => Promise.resolve({ error: { message } }) }));
+        const err = await getTokenInfo('https://rpc.test', 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v').catch(e => e);
+        expect(err).toBeInstanceOf(Error);
+        expect(err.transactionWouldFail).toBe(expected);
+      }
     });
 
     test('still falls back to a default gas limit when eth_estimateGas fails for another reason', async () => {

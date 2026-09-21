@@ -76,8 +76,26 @@ async function rpcCall(url, method, params = []) {
     body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
   });
   const data = await response.json();
-  if (data.error) throw new Error(friendlyRpcError(data.error, method));
+  if (data.error) {
+    const err = new Error(friendlyRpcError(data.error, method));
+    // Classified from the raw RPC text, before any rewording, so callers can
+    // branch on it without depending on the friendly message's wording.
+    err.transactionWouldFail = isTransactionFailureMessage(data.error);
+    throw err;
+  }
   return data.result;
+}
+
+/**
+ * True when an RPC error says the transaction itself cannot succeed
+ * (insufficient funds, execution reverted), as opposed to the node failing
+ * to answer.
+ */
+function isTransactionFailureMessage(error) {
+  const lower = String(error?.message || JSON.stringify(error)).toLowerCase();
+  return lower.includes('insufficient funds')
+    || lower.includes('insufficient lamports')
+    || lower.includes('reverted');
 }
 
 /**
@@ -125,10 +143,7 @@ function friendlyRpcError(error, method = '') {
  * gas on a transaction the node already said will fail, so let it propagate.
  */
 function isDoomedTransactionError(err) {
-  // Errors arrive here already rewritten by friendlyRpcError, so match its
-  // wording for the EVM insufficient-funds case rather than the raw RPC text.
-  const lower = String(err?.message || '').toLowerCase();
-  return lower.includes('insufficient native balance') || lower.includes('reverted');
+  return err?.transactionWouldFail === true;
 }
 
 function bigIntToHex(n) {
