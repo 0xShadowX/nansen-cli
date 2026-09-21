@@ -4,7 +4,7 @@
  */
 
 import { NansenAPI, NansenError, CommandError, ErrorCode, saveConfig, deleteConfig, getConfigFile, clearCache, getCacheDir, validateAddress, normalizeAddress, sleep } from './api.js';
-import { buildWalletCommands } from './wallet.js';
+import { buildWalletCommands, WALLET_SUBCOMMANDS } from './wallet.js';
 import { buildBridgeCommands, formatBridgeRoutes } from './bridge.js';
 import { buildPerpCommands } from './perp.js';
 import { buildTradingCommands } from './trading.js';
@@ -14,7 +14,7 @@ import { buildAgentCommands } from './commands/agent.js';
 import { buildMcpCommands } from './commands/mcp.js';
 import { buildCompletionCommands } from './commands/completion.js';
 import { buildResearchCommands, RESEARCH_HISTORICAL_SUBCOMMANDS, RESEARCH_SUBCOMMANDS } from './commands/research.js';
-import { buildPagination, parseSort, parseCsvOption, rejectBlankOption } from './query-options.js';
+import { buildPagination, parseSort, parseCsvOption, rejectBlankOption, parseObjectOption } from './query-options.js';
 export { buildPagination, parseSort };
 import { resolveAddress, isEnsName } from './ens.js';
 import { compareSemver } from './semver.js';
@@ -69,24 +69,33 @@ export function resolveBooleanOption(options, flags, key) {
 // ============= Field Filtering =============
 
 /**
- * Filter object to include only specified fields
- * Supports nested paths with dot notation (e.g., "data.results")
+ * Filter object to include only specified fields.
+ *
+ * A bare name ("address") matches that key at any depth. A dotted path
+ * ("data.results", "results.address") matches only at that position, counted
+ * from the root of the payload; array elements do not add a segment, so
+ * "results.address" selects `address` inside each item of `results`.
  */
 export function filterFields(data, fields) {
   if (!fields || fields.length === 0) return data;
   
-  const fieldSet = new Set(fields);
+  const names = new Set();
+  const paths = new Set();
+  for (const field of fields) {
+    (field.includes('.') ? paths : names).add(field);
+  }
   
-  function filterObject(obj) {
+  function filterObject(obj, path) {
     if (obj === null || obj === undefined) return obj;
     if (Array.isArray(obj)) {
-      return obj.map(item => filterObject(item));
+      return obj.map(item => filterObject(item, path));
     }
     if (typeof obj !== 'object') return obj;
     
     const filtered = {};
     for (const key of Object.keys(obj)) {
-      if (fieldSet.has(key)) {
+      const keyPath = path ? `${path}.${key}` : key;
+      if (names.has(key) || paths.has(keyPath)) {
         // Explicitly requested — include as-is
         filtered[key] = obj[key];
       } else if (typeof obj[key] === 'object' && obj[key] !== null) {
@@ -97,7 +106,7 @@ export function filterFields(data, fields) {
           const hasObjectElements = obj[key].length > 0 &&
             typeof obj[key][0] === 'object' && obj[key][0] !== null;
           if (hasObjectElements) {
-            const nested = obj[key].map(item => filterObject(item))
+            const nested = obj[key].map(item => filterObject(item, keyPath))
               .filter(item => Object.keys(item).length > 0);
             if (nested.length > 0) {
               filtered[key] = nested;
@@ -105,7 +114,7 @@ export function filterFields(data, fields) {
           }
         } else {
           // Plain object — always recurse in case it wraps requested fields
-          const nested = filterObject(obj[key]);
+          const nested = filterObject(obj[key], keyPath);
           if (nested !== null && nested !== undefined && Object.keys(nested).length > 0) {
             filtered[key] = nested;
           }
@@ -115,7 +124,7 @@ export function filterFields(data, fields) {
     return filtered;
   }
   
-  return filterObject(data);
+  return filterObject(data, '');
 }
 
 /**
@@ -228,15 +237,22 @@ export function parseArgs(args) {
       // that value is meaningful. The dash guard applies only to two-token
       // input, where `--key --next` denotes two separate arguments.
       } else if (hasInlineValue || (next !== undefined && (!next.startsWith('-') || /^-\d/.test(next)))) {
-        // Try to parse as JSON first (for objects/arrays/booleans),
-        // but keep numeric strings as strings to avoid precision loss
-        // and scientific notation for large integers (e.g. 1e+21).
-        let parsedValue;
+        // Try to parse as JSON so object/array options (`--filters '{}'`,
+        // `--order-by '[...]'`) arrive structured. Numbers stay strings to
+        // avoid precision loss and scientific notation for large integers
+        // (e.g. 1e+21). The bare keywords true/false/null stay strings too:
+        // no option takes a boolean or null *value*, so coercing them would
+        // silently retype a string option (`--sort true` used to become the
+        // boolean true). Boolean options read the strings 'true'/'false'
+        // through resolveBooleanOption().
+        let parsedValue = next;
         try {
           const parsed = JSON.parse(next);
-          parsedValue = typeof parsed === 'number' ? next : parsed;
+          if (typeof parsed !== 'number' && typeof parsed !== 'boolean' && parsed !== null) {
+            parsedValue = parsed;
+          }
         } catch {
-          parsedValue = next;
+          // Not JSON: keep the raw string.
         }
         if (!hasInlineValue) i++;
         // Accumulate repeated options into arrays (supports repeatable flags like --token, --subject)
@@ -544,6 +560,10 @@ export const USAGE_ERROR_CODES = new Set(['MISSING_PARAM', 'MISSING_ARGS']);
 
 export function isUsageError(errorData, { pretty, table, csv, stream, isTTY }) {
   if (!USAGE_ERROR_CODES.has(errorData.code)) return false;
+  // API errors can map onto the same semantic code (for example the server's
+  // `missing_field` becomes MISSING_PARAM), but they are not local usage
+  // banners and must retain the structured envelope in every output mode.
+  if (errorData.status != null) return false;
   if (pretty || table || csv || stream) return false;
   return !!isTTY;
 }
@@ -893,47 +913,102 @@ export async function compareWallets(api, params = {}) {
     }
   }
 
-  // Fetch counterparties and balances for both addresses
+  // Fetch counterparties and balances for both addresses. A failed request is
+  // recorded rather than treated as an empty result, so an auth or rate-limit
+  // error cannot masquerade as "no overlap" / "0 USD".
+  const settle = (promise) => promise.then(value => ({ value }), error => ({ error }));
   const [cp1, cp2] = await Promise.all([
-    api.addressCounterparties({ address: addr1, chain, days }).catch(() => null),
-    api.addressCounterparties({ address: addr2, chain, days }).catch(() => null),
+    settle(api.addressCounterparties({ address: addr1, chain, days })),
+    settle(api.addressCounterparties({ address: addr2, chain, days })),
   ]);
   await sleep(delayMs);
   const [bal1, bal2] = await Promise.all([
-    api.addressBalance({ address: addr1, chain }).catch(() => null),
-    api.addressBalance({ address: addr2, chain }).catch(() => null),
+    settle(api.addressBalance({ address: addr1, chain })),
+    settle(api.addressBalance({ address: addr2, chain })),
   ]);
+
+  const outcomes = [
+    [addr1, 'counterparties', cp1], [addr2, 'counterparties', cp2],
+    [addr1, 'balance', bal1], [addr2, 'balance', bal2],
+  ];
+  const errors = [];
+  const failures = [];
+  for (const [address, source, outcome] of outcomes) {
+    if (outcome.error) {
+      failures.push(outcome.error);
+      errors.push({ address, source, code: outcome.error.code ?? 'UNKNOWN', message: outcome.error.message });
+    }
+  }
+  if (failures.length === outcomes.length) {
+    throw failures[0];
+  }
 
   // Extract counterparty addresses
   const extractCps = (result) => {
     const list = result?.data?.results || result?.counterparties || result?.data || [];
     return Array.isArray(list) ? list : [];
   };
-  const cps1 = extractCps(cp1);
-  const cps2 = extractCps(cp2);
-  const cpAddrs1 = new Set(cps1.map(c => c.counterparty_address || c.address || c.counterparty).filter(Boolean));
-  const cpAddrs2 = new Set(cps2.map(c => c.counterparty_address || c.address || c.counterparty).filter(Boolean));
-  const sharedCpAddrs = [...cpAddrs1].filter(a => cpAddrs2.has(a));
+  let sharedCpAddrs = null;
+  if (!cp1.error && !cp2.error) {
+    const cpAddrs1 = new Set(extractCps(cp1.value).map(c => c.counterparty_address || c.address || c.counterparty).filter(Boolean));
+    const cpAddrs2 = new Set(extractCps(cp2.value).map(c => c.counterparty_address || c.address || c.counterparty).filter(Boolean));
+    sharedCpAddrs = [...cpAddrs1].filter(a => cpAddrs2.has(a));
+  }
 
   // Extract token holdings
   const extractTokens = (result) => {
     const list = result?.data?.results || result?.balances || result?.data || [];
     return Array.isArray(list) ? list : [];
   };
-  const tokens1 = extractTokens(bal1);
-  const tokens2 = extractTokens(bal2);
-  const tokenSyms1 = new Set(tokens1.map(t => t.token_symbol).filter(Boolean));
-  const tokenSyms2 = new Set(tokens2.map(t => t.token_symbol).filter(Boolean));
-  const sharedTokens = [...tokenSyms1].filter(s => tokenSyms2.has(s));
+  const tokens1 = bal1.error ? null : extractTokens(bal1.value);
+  const tokens2 = bal2.error ? null : extractTokens(bal2.value);
+  let sharedTokens = null;
+  if (tokens1 && tokens2) {
+    // Two different contracts can share a symbol, so when both sides report a
+    // token address the address decides. When either side has no address for
+    // a token (some responses omit it for the native asset) the symbol is the
+    // only identity available and is used instead.
+    const addressOf = (t) => {
+      const address = t.token_address || t.mint || t.address;
+      return address ? String(address).toLowerCase() : null;
+    };
+    const symbolOf = (t) => (t.token_symbol ? String(t.token_symbol).toLowerCase() : null);
+    const addresses2 = new Set(tokens2.map(addressOf).filter(Boolean));
+    const symbols2 = new Set(tokens2.map(symbolOf).filter(Boolean));
+    const symbolsWithoutAddress2 = new Set(
+      tokens2.filter(t => !addressOf(t)).map(symbolOf).filter(Boolean)
+    );
+    const seen = new Set();
+    sharedTokens = [];
+    for (const t of tokens1) {
+      const address = addressOf(t);
+      const symbol = symbolOf(t);
+      // With an address on both sides only the address counts. If either
+      // side omits it (as some responses do for the native asset) a matching
+      // symbol is taken as the same token.
+      const matched = address
+        ? addresses2.has(address) || (symbol && symbolsWithoutAddress2.has(symbol))
+        : symbol && symbols2.has(symbol);
+      const key = address || symbol;
+      if (matched && !seen.has(key)) {
+        seen.add(key);
+        sharedTokens.push(t.token_symbol || address);
+      }
+    }
+  }
+  const totalUsd = (tokens) => tokens === null
+    ? null
+    : tokens.reduce((sum, t) => sum + (t.value_usd ?? t.balance_usd ?? 0), 0);
 
   return {
     addresses: [addr1, addr2], chain,
     shared_counterparties: sharedCpAddrs,
     shared_tokens: sharedTokens,
     balances: [
-      { address: addr1, total_usd: tokens1.reduce((sum, t) => sum + (t.value_usd ?? t.balance_usd ?? 0), 0) },
-      { address: addr2, total_usd: tokens2.reduce((sum, t) => sum + (t.value_usd ?? t.balance_usd ?? 0), 0) },
+      { address: addr1, total_usd: totalUsd(tokens1) },
+      { address: addr2, total_usd: totalUsd(tokens2) },
     ],
+    ...(errors.length > 0 && { incomplete: true, errors }),
   };
 }
 
@@ -946,9 +1021,9 @@ USAGE: nansen <command> [subcommand] [options]
 COMMANDS:
   trade       DEX swaps/bridges: quote, execute, bridge-status, limit-order
   bridge      Hyperliquid bridge: quote, execute, status (EVM <-> HL)
-  perp        Hyperliquid perps: order, cancel, close, leverage, positions
+  perp        Hyperliquid perps: order, cancel, close, leverage, transfer, approve-builder-fee, positions, orders, account, meta, screener, leaderboard
   research    analytics: smart-money, profiler, token, search, perp, portfolio
-  wallet      create, list, show, export, default, delete, forget-password
+  wallet      ${WALLET_SUBCOMMANDS.join(', ')}
   agent       Ask the Nansen AI research agent (fast/expert modes)
   alerts      list, create, update, toggle, delete
   web         search, fetch
@@ -988,10 +1063,10 @@ EXAMPLES:
   nansen research profiler balance --address 0x... --chain ethereum
 
 DEPRECATED ALIASES (still work, will be removed in a future version):
-  smart-money, profiler, token, search, perp, portfolio → use "nansen research <command>"
+  smart-money, profiler, token, search, portfolio → use "nansen research <command>"
   quote, execute → use "nansen trade <command>"
 
-Research chains: ethereum, solana, base, bnb, arbitrum, polygon, optimism, avalanche, linea, scroll, mantle, ronin, sei, plasma, sonic, monad, hyperevm, iotaevm
+Research chains: ${SCHEMA.chains.join(', ')}
 Trade chains: solana, base
 Bridge chains: ethereum, base, arbitrum, polygon, bnb, hyperliquid
 Labels: Fund, Smart Trader, 30D/90D/180D Smart Trader, Smart HL Perps Trader
@@ -1165,14 +1240,9 @@ export function buildCommands(deps = {}) {
             throw new NansenError('At least one query is required. Usage: nansen web search "bitcoin price" --num-results 5', ErrorCode.MISSING_PARAM);
           }
           let numResults;
-          if (options['num-results'] !== undefined) {
-            const numResultsRaw = parseInt(options['num-results'], 10);
-            if (Number.isNaN(numResultsRaw)) {
-              // Non-numeric — fall back to API default
-              numResults = undefined;
-            } else if (numResultsRaw >= 1 && numResultsRaw <= 20) {
-              numResults = numResultsRaw;
-            } else {
+          if (options['num-results'] !== undefined || flags['num-results']) {
+            numResults = parseSafeIntegerOption('num-results', options, flags, undefined, 'whole number between 1 and 20');
+            if (numResults < 1 || numResults > 20) {
               throw new NansenError('--num-results must be between 1 and 20', ErrorCode.INVALID_PARAMS);
             }
           }
@@ -1450,7 +1520,7 @@ export function buildCommands(deps = {}) {
       const subcommand = args[0] || 'help';
       const chain = options.chain || 'solana';
       const chains = options.chains || [chain];
-      const filters = options.filters || {};
+      const filters = parseObjectOption(options.filters, 'filters');
       const orderBy = parseSort(options.sort, options['order-by']);
       const pagination = buildPagination(options);
 
@@ -1468,7 +1538,7 @@ export function buildCommands(deps = {}) {
       const handlers = {
         'netflow': () => apiInstance.smartMoneyNetflow({ chains, filters, orderBy, pagination }),
         'dex-trades': () => apiInstance.smartMoneyDexTrades({ chains, filters, orderBy, pagination }),
-        'perp-trades': () => apiInstance.smartMoneyPerpTrades({ filters, orderBy, pagination, onlyNewPositions: options['only-new-positions'] ?? flags['only-new-positions'] }),
+        'perp-trades': () => apiInstance.smartMoneyPerpTrades({ filters, orderBy, pagination, onlyNewPositions: resolveBooleanOption(options, flags, 'only-new-positions') }),
         'holdings': () => apiInstance.smartMoneyHoldings({ chains, filters, orderBy, pagination }),
         'dcas': () => apiInstance.smartMoneyDcas({ filters, orderBy, pagination }),
         'historical-holdings': () => apiInstance.smartMoneyHistoricalHoldings({ chains, filters, orderBy, pagination, days }),
@@ -1506,7 +1576,7 @@ export function buildCommands(deps = {}) {
           throw new NansenError(err.message, ErrorCode.INVALID_ADDRESS);
         }
       }
-      const filters = options.filters || {};
+      const filters = parseObjectOption(options.filters, 'filters');
       const orderBy = parseSort(options.sort, options['order-by']);
       const pagination = buildPagination(options);
       const days = [
@@ -1618,7 +1688,7 @@ export function buildCommands(deps = {}) {
       const tokenSymbol = options.symbol || options['token-symbol'];
       const chains = options.chains || [chain];
       const timeframe = options.timeframe || '24h';
-      const filters = options.filters || {};
+      const filters = parseObjectOption(options.filters, 'filters');
       const orderBy = parseSort(options.sort, options['order-by']);
       const pagination = buildPagination(options);
       const days = [
@@ -1634,13 +1704,13 @@ export function buildCommands(deps = {}) {
         : 30;
 
       // Convenience filter for smart money only
-      const onlySmartMoney = options['smart-money'] || flags['smart-money'] || false;
+      const onlySmartMoney = resolveBooleanOption(options, flags, 'smart-money') ?? false;
       if (onlySmartMoney) {
         filters.include_smart_money_labels = filters.include_smart_money_labels ||
           ['Fund', 'Smart Trader', '30D Smart Trader', '90D Smart Trader', '180D Smart Trader'];
       }
 
-      const includeStablecoins = options['include-stablecoins'] ?? flags['include-stablecoins'];
+      const includeStablecoins = resolveBooleanOption(options, flags, 'include-stablecoins');
       if (includeStablecoins !== undefined) {
         filters.include_stablecoins = includeStablecoins;
       }
@@ -1651,19 +1721,26 @@ export function buildCommands(deps = {}) {
         'info': () => apiInstance.tokenInformation({ tokenAddress, chain, timeframe: options.timeframe }),
         'screener': async () => {
           const search = options.search;
-          // When searching, fetch more results to filter from (API has no server-side search)
-          const searchPagination = search 
-            ? { page: 1, per_page: Math.max(500, pagination?.per_page || 0) }
+          if (search !== undefined && typeof search !== 'string') {
+            throw new NansenError('--search must be a string', ErrorCode.INVALID_PARAMS);
+          }
+          // When searching, fetch more results to filter from (API has no server-side search).
+          // --page/--limit are applied client-side to the filtered list, so the
+          // candidate fetch has to cover every page up to the requested one.
+          const requestedLimit = pagination?.per_page || 100;
+          const requestedPage = pagination?.page || 1;
+          const searchPagination = search
+            ? { page: 1, per_page: Math.max(500, requestedPage * requestedLimit) }
             : pagination;
           const result = await apiInstance.tokenScreener({ chains, timeframe, filters, orderBy, pagination: searchPagination });
           if (search) {
             const q = search.toLowerCase();
-            const requestedLimit = pagination?.per_page || 100;
+            const offset = (requestedPage - 1) * requestedLimit;
             const filterArr = (arr) => arr.filter(t => 
               (t.token_symbol && t.token_symbol.toLowerCase().includes(q)) ||
               (t.token_name && t.token_name.toLowerCase().includes(q)) ||
               (t.token_address && t.token_address.toLowerCase() === q)
-            ).slice(0, requestedLimit);
+            ).slice(offset, offset + requestedLimit);
             // Handle nested response shapes: {data: [...]} or {data: {data: [...]}}
             if (Array.isArray(result?.data)) {
               return { ...result, data: filterArr(result.data) };
@@ -1686,7 +1763,14 @@ export function buildCommands(deps = {}) {
         },
         'who-bought-sold': () => {
           const date = parseDateOption(options.date, days, flags.date);
-          const buyOrSell = (options['buy-or-sell'] || 'BUY').toUpperCase();
+          const buyOrSellRaw = options['buy-or-sell'];
+          if (buyOrSellRaw !== undefined && typeof buyOrSellRaw !== 'string') {
+            throw new NansenError('--buy-or-sell must be BUY or SELL', ErrorCode.INVALID_PARAMS);
+          }
+          const buyOrSell = (buyOrSellRaw || 'BUY').toUpperCase();
+          if (buyOrSell !== 'BUY' && buyOrSell !== 'SELL') {
+            throw new NansenError('--buy-or-sell must be BUY or SELL', ErrorCode.INVALID_PARAMS);
+          }
           return apiInstance.tokenWhoBoughtSold({ tokenAddress, chain, buyOrSell, filters, orderBy, pagination, days, date });
         },
         'flow-intelligence': () => apiInstance.tokenFlowIntelligence({ tokenAddress, chain, timeframe: options.timeframe || '1d' }),
@@ -1775,7 +1859,7 @@ export function buildCommands(deps = {}) {
     'perp': async (args, apiInstance, flags, options) => {
       rejectBlankOption(options.days, 'days', '30');
       const subcommand = args[0] || 'help';
-      const filters = options.filters || {};
+      const filters = parseObjectOption(options.filters, 'filters');
       const orderBy = parseSort(options.sort, options['order-by']);
       const pagination = buildPagination(options);
       const days = ['screener', 'leaderboard'].includes(subcommand)
