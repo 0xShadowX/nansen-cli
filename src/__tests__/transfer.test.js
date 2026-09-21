@@ -568,9 +568,67 @@ describe('sendTokens integration', () => {
 
       const err = await sendTokens({ to: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4', amount: '0.01', chain: 'base', password: 'test' }).catch(e => e);
       expect(err).toBeInstanceOf(Error);
-      expect(err.message).toMatch(/Insufficient native balance.*gas token.*ETH/);
+      expect(err.message).toMatch(/Insufficient native balance.*native gas token.*ETH/);
       expect(err.message).toContain('insufficient funds for gas * price + value');
       expect(err.message).not.toMatch(/SOL/);
+    });
+
+    // eth_estimateGas used to be wrapped in a bare catch that fell back to a
+    // default gas limit for every failure — including the node reporting that
+    // the transaction itself cannot succeed. That broadcast a doomed
+    // transaction and burned gas on it.
+    test('does not broadcast when eth_estimateGas reports the transaction would revert', async () => {
+      fetch.mockImplementation(async (url, opts) => {
+        const body = JSON.parse(opts.body);
+        if (body.method === 'eth_estimateGas') {
+          return { json: () => Promise.resolve({ error: { code: 3, message: 'execution reverted: ERC20: transfer amount exceeds balance' } }) };
+        }
+        if (body.method === 'eth_call') {
+          // decimals() = 6 for validateErc20Token, then balanceOf = 500 USDC
+          if (body.params[0].data === '0x313ce567') {
+            return { json: () => Promise.resolve({ result: '0x' + (6n).toString(16).padStart(64, '0') }) };
+          }
+          return { json: () => Promise.resolve({ result: '0x' + (500000000n).toString(16).padStart(64, '0') }) };
+        }
+        const responses = {
+          'eth_getTransactionCount': '0x0',
+          'eth_feeHistory': { baseFeePerGas: ['0x1','0x1','0x1','0x1','0x1'] },
+          'eth_maxPriorityFeePerGas': '0x5F5E100',
+          'eth_getCode': '0x6080604052',
+          'eth_sendRawTransaction': '0xshouldnotbesent',
+        };
+        return { json: () => Promise.resolve({ result: responses[body.method] ?? '0x0' }) };
+      });
+
+      await expect(sendTokens({
+        to: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4', amount: '1', chain: 'base',
+        token: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', password: 'test',
+      })).rejects.toThrow(/execution reverted/);
+
+      const sendCall = fetch.mock.calls.find(c => JSON.parse(c[1].body).method === 'eth_sendRawTransaction');
+      expect(sendCall).toBeUndefined();
+    });
+
+    test('still falls back to a default gas limit when eth_estimateGas fails for another reason', async () => {
+      fetch.mockImplementation(async (url, opts) => {
+        const body = JSON.parse(opts.body);
+        if (body.method === 'eth_estimateGas') {
+          return { json: () => Promise.resolve({ error: { code: -32603, message: 'internal error: node is syncing' } }) };
+        }
+        const responses = {
+          'eth_getTransactionCount': '0x0',
+          'eth_feeHistory': { baseFeePerGas: ['0x1','0x1','0x1','0x1','0x1'] },
+          'eth_maxPriorityFeePerGas': '0x5F5E100',
+          'eth_getBalance': '0x' + (10n ** 18n).toString(16),
+          'eth_sendRawTransaction': '0xfallbacktx',
+          'eth_getTransactionReceipt': { status: '0x1', blockNumber: '0x100' },
+        };
+        return { json: () => Promise.resolve({ result: responses[body.method] ?? '0x0' }) };
+      });
+
+      const result = await sendTokens({ to: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4', amount: '0.01', chain: 'base', password: 'test' });
+      expect(result.success).toBe(true);
+      expect(result.transactionHash).toBe('0xfallbacktx');
     });
 
     test('keeps the SOL advice for a Solana insufficient-funds rejection', async () => {

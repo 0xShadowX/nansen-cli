@@ -95,7 +95,7 @@ function friendlyRpcError(error, method = '') {
   const isEvm = typeof method === 'string' && method.startsWith('eth_');
 
   if (isEvm && lower.includes('insufficient funds')) {
-    return `Insufficient native balance to cover gas and value for this transaction. Top up the wallet with the chain's gas token (ETH on Ethereum and Base). RPC said: ${msg}`;
+    return `Insufficient native balance to cover gas and value for this transaction. Top up the wallet with the chain's native gas token (ETH on most EVM chains). RPC said: ${msg}`;
   }
   if (lower.includes('no record of a prior credit') || lower.includes('accountnotfound')) {
     return 'Insufficient SOL for transaction fees. Send at least 0.01 SOL to your wallet.';
@@ -116,6 +116,20 @@ function friendlyRpcError(error, method = '') {
   return `RPC error: ${msg}`;
 }
 
+
+/**
+ * eth_estimateGas fails for two very different reasons: the node could not run
+ * the estimate (transient — fall back to a default gas limit), or it ran the
+ * call and the transaction cannot succeed (insufficient funds, execution
+ * reverted). Broadcasting the second kind with a default gas limit only burns
+ * gas on a transaction the node already said will fail, so let it propagate.
+ */
+function isDoomedTransactionError(err) {
+  const lower = String(err?.message || '').toLowerCase();
+  return lower.includes('insufficient native balance')
+    || lower.includes('insufficient funds')
+    || lower.includes('reverted');
+}
 
 function bigIntToHex(n) {
   if (n === 0n) return '0x';
@@ -241,7 +255,8 @@ async function buildEvmTransaction({ to, amount, token, privateKey, chain, max =
     const gasEstimate = await rpcCall(rpcUrl, 'eth_estimateGas', [estimateParams]);
     // Add 20% buffer for safety
     gasLimit = BigInt(gasEstimate) * 120n / 100n;
-  } catch {
+  } catch (err) {
+    if (isDoomedTransactionError(err)) throw err;
     // Fallback to safe defaults if estimation fails
     gasLimit = token ? 100000n : 21000n;
   }
@@ -920,7 +935,8 @@ async function sendTokensViaWalletConnect({ to, amount, chain, token, max, dryRu
     if (txValue && txValue !== '0') estimateParams.value = '0x' + BigInt(txValue).toString(16);
     const gasEstimate = await rpcCall(rpcUrl, 'eth_estimateGas', [estimateParams]);
     gasLimit = (BigInt(gasEstimate) * 120n / 100n).toString(); // 20% buffer
-  } catch {
+  } catch (err) {
+    if (isDoomedTransactionError(err)) throw err;
     gasLimit = token ? '100000' : '21000'; // fallback
   }
 
