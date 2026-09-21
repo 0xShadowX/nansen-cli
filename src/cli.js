@@ -14,7 +14,7 @@ import { buildAgentCommands } from './commands/agent.js';
 import { buildMcpCommands } from './commands/mcp.js';
 import { buildCompletionCommands } from './commands/completion.js';
 import { buildResearchCommands, RESEARCH_HISTORICAL_SUBCOMMANDS, RESEARCH_SUBCOMMANDS } from './commands/research.js';
-import { buildPagination, parseSort, parseCsvOption, rejectBlankOption } from './query-options.js';
+import { buildPagination, parseSort, parseCsvOption, rejectBlankOption, parseObjectOption } from './query-options.js';
 export { buildPagination, parseSort };
 import { resolveAddress, isEnsName } from './ens.js';
 import { compareSemver } from './semver.js';
@@ -1489,7 +1489,7 @@ export function buildCommands(deps = {}) {
       const subcommand = args[0] || 'help';
       const chain = options.chain || 'solana';
       const chains = options.chains || [chain];
-      const filters = options.filters || {};
+      const filters = parseObjectOption(options.filters, 'filters');
       const orderBy = parseSort(options.sort, options['order-by']);
       const pagination = buildPagination(options);
 
@@ -1545,7 +1545,7 @@ export function buildCommands(deps = {}) {
           throw new NansenError(err.message, ErrorCode.INVALID_ADDRESS);
         }
       }
-      const filters = options.filters || {};
+      const filters = parseObjectOption(options.filters, 'filters');
       const orderBy = parseSort(options.sort, options['order-by']);
       const pagination = buildPagination(options);
       const days = [
@@ -1657,7 +1657,7 @@ export function buildCommands(deps = {}) {
       const tokenSymbol = options.symbol || options['token-symbol'];
       const chains = options.chains || [chain];
       const timeframe = options.timeframe || '24h';
-      const filters = options.filters || {};
+      const filters = parseObjectOption(options.filters, 'filters');
       const orderBy = parseSort(options.sort, options['order-by']);
       const pagination = buildPagination(options);
       const days = [
@@ -1828,7 +1828,7 @@ export function buildCommands(deps = {}) {
     'perp': async (args, apiInstance, flags, options) => {
       rejectBlankOption(options.days, 'days', '30');
       const subcommand = args[0] || 'help';
-      const filters = options.filters || {};
+      const filters = parseObjectOption(options.filters, 'filters');
       const orderBy = parseSort(options.sort, options['order-by']);
       const pagination = buildPagination(options);
       const days = ['screener', 'leaderboard'].includes(subcommand)

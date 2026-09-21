@@ -66,6 +66,23 @@ export function parseCsvOption(val, name) {
   return val.split(',').map(s => s.trim()).filter(Boolean);
 }
 
+/**
+ * Normalise a `--filters '<json>'` option into a plain object, or `{}` when
+ * absent. parseArgs already JSON-parses the value, so anything that is not a
+ * plain object here (`--filters '[]'`, `--filters abc`, a repeated flag) would
+ * otherwise go straight into the request body and fail upstream with a 422.
+ */
+export function parseObjectOption(val, name) {
+  if (val === undefined || val === '') return {};
+  if (val === null || typeof val !== 'object' || Array.isArray(val)) {
+    throw new NansenError(
+      `--${name} must be a JSON object, e.g. --${name} '{"key": "value"}'`,
+      ErrorCode.INVALID_PARAMS,
+    );
+  }
+  return val;
+}
+
 /** Reject explicit blank strings before a handler selects an omitted-option default. */
 export function rejectBlankOption(value, name, example) {
   if (typeof value === 'string' && value.trim() === '') {

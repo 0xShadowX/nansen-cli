@@ -30,6 +30,7 @@ import {
   buildPagination,
   parseAddressList
 } from '../cli.js';
+import { parseObjectOption } from '../query-options.js';
 import {
   formatAlertsTable,
   buildAlertData,
@@ -1931,6 +1932,52 @@ describe('formatError', () => {
     const result = formatError(error);
     expect(result.details).toEqual({ info: 'from data property' });
   });
+});
+
+describe('parseObjectOption', () => {
+  it('returns an empty object when the option is absent or blank', () => {
+    expect(parseObjectOption(undefined, 'filters')).toEqual({});
+    expect(parseObjectOption('', 'filters')).toEqual({});
+  });
+
+  it('passes a plain object through', () => {
+    const filters = { chain: 'solana', min_usd: 100 };
+    expect(parseObjectOption(filters, 'filters')).toBe(filters);
+  });
+
+  it('rejects arrays, primitives, null and repeated values with INVALID_PARAMS', () => {
+    for (const bad of [[], [{ a: 1 }, { b: 2 }], 'abc', 'true', 42, null]) {
+      let error;
+      try { parseObjectOption(bad, 'filters'); } catch (e) { error = e; }
+      expect(error).toBeInstanceOf(NansenError);
+      expect(error.code).toBe(ErrorCode.INVALID_PARAMS);
+      expect(error.message).toContain('--filters must be a JSON object');
+    }
+  });
+});
+
+describe('--filters reaches handlers only as an object', () => {
+  const commands = buildCommands({});
+  const cases = [
+    ['smart-money', ['netflow'], 'smartMoneyNetflow', { chain: 'solana' }],
+    ['profiler', ['transactions'], 'addressTransactions', { address: '0x0000000000000000000000000000000000000001', chain: 'ethereum' }],
+    ['token', ['screener'], 'tokenScreener', { chain: 'solana' }],
+  ];
+
+  for (const [group, args, method, base] of cases) {
+    it(`${group} ${args[0]} rejects --filters '[]' before calling the API`, async () => {
+      const mockApi = { [method]: vi.fn().mockResolvedValue({ data: [] }) };
+      await expect(commands[group](args, mockApi, {}, { ...base, filters: [] }))
+        .rejects.toMatchObject({ code: ErrorCode.INVALID_PARAMS });
+      expect(mockApi[method]).not.toHaveBeenCalled();
+    });
+
+    it(`${group} ${args[0]} still forwards an object --filters`, async () => {
+      const mockApi = { [method]: vi.fn().mockResolvedValue({ data: [] }) };
+      await commands[group](args, mockApi, {}, { ...base, filters: { min_usd: 1 } });
+      expect(mockApi[method]).toHaveBeenCalledWith(expect.objectContaining({ filters: { min_usd: 1 } }));
+    });
+  }
 });
 
 describe('parseSort', () => {
