@@ -14,6 +14,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   BASE_CANDIDATES,
   findChangedChangesets,
+  findInvalidChangesets,
   findNewChangesets,
   isOnBase,
   resolveBaseRef,
@@ -182,6 +183,13 @@ describe('check-changeset: outcomes', () => {
     expect(result.exitCode).toBe(1);
     expect(result.output).toContain(INVALID_ERROR);
     expect(result.output).toContain('.changeset/existing.md');
+  });
+
+  it('never reads a changeset path outside the repository changeset directory', () => {
+    const dir = fullClone('path-containment', 'no-changeset');
+    expect(findInvalidChangesets(['.changeset/../../package.json'], dir))
+      .toEqual(['.changeset/../../package.json']);
+    expect(findInvalidChangesets(['/etc/passwd'], dir)).toEqual(['/etc/passwd']);
   });
 
   it('fails when a branch renames an existing changeset with a wrong package reference', () => {

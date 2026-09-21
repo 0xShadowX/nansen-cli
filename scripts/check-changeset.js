@@ -16,8 +16,8 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { readFileSync, realpathSync } from "node:fs";
-import { join } from "node:path";
+import { lstatSync, readFileSync, realpathSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const BASE_CANDIDATES = ["origin/main", "main"];
@@ -85,7 +85,16 @@ export function findChangedChangesets(baseRef, cwd = process.cwd()) {
 /** Changeset files whose frontmatter does not reference this package. */
 export function findInvalidChangesets(files, cwd = process.cwd()) {
   return files.filter((file) => {
-    const frontmatter = readFileSync(join(cwd, file), "utf8").split("---")[1] || "";
+    // Treat git output as untrusted input. A changeset must be a regular file
+    // directly inside this checkout's .changeset directory; never follow a
+    // symlink or allow an absolute/parent path to escape the repository.
+    const changesetDir = resolve(cwd, ".changeset");
+    const changesetPath = resolve(cwd, file);
+    if (dirname(changesetPath) !== changesetDir) return true;
+    const stat = lstatSync(changesetPath);
+    if (!stat.isFile() || stat.isSymbolicLink()) return true;
+
+    const frontmatter = readFileSync(changesetPath, "utf8").split("---")[1] || "";
     return !frontmatter.includes(PACKAGE_REFERENCE);
   });
 }
