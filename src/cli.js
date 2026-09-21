@@ -1354,8 +1354,10 @@ export function buildCommands(deps = {}) {
         // silently comparing as if it were version 0.0.0, which would show
         // every entry rather than flag the typo.
         if (!/^v?\d+(\.\d+){0,2}$/.test(String(since))) {
-          log(`Invalid --since value "${since}": expected a version like 1.43 or 1.43.0.`);
-          return;
+          throw new NansenError(
+            `Invalid --since value "${since}": expected a version like 1.43 or 1.43.0.`,
+            ErrorCode.INVALID_PARAMS
+          );
         }
         // Show only entries from the given version onwards
         const lines = content.split('\n');

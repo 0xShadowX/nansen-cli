@@ -380,7 +380,9 @@ describe('changelog --since filtering', () => {
     // Version comparison here is major.minor.patch only; a pre-release tag
     // cannot be ordered, so it is refused rather than silently read as its
     // release version.
-    const out = await runChangelog({ since: '1.11.0-beta.1' });
-    expect(out).toBe('Invalid --since value "1.11.0-beta.1": expected a version like 1.43 or 1.43.0.');
+    await expect(runChangelog({ since: '1.11.0-beta.1' })).rejects.toMatchObject({
+      code: 'INVALID_PARAMS',
+      message: 'Invalid --since value "1.11.0-beta.1": expected a version like 1.43 or 1.43.0.',
+    });
   });
 });
