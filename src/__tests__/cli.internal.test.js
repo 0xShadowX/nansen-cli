@@ -30,7 +30,7 @@ import {
   buildPagination,
   parseAddressList
 } from '../cli.js';
-import { parseObjectOption } from '../query-options.js';
+import { parseCsvOption, parseObjectOption } from '../query-options.js';
 import {
   formatAlertsTable,
   buildAlertData,
@@ -1978,6 +1978,27 @@ describe('--filters reaches handlers only as an object', () => {
       expect(mockApi[method]).toHaveBeenCalledWith(expect.objectContaining({ filters: { min_usd: 1 } }));
     });
   }
+});
+
+describe('parseCsvOption', () => {
+  it('splits a single comma-separated value', () => {
+    expect(parseCsvOption('defi, nft ,,sports', 'tags')).toEqual(['defi', 'nft', 'sports']);
+  });
+
+  it('flattens a repeated flag whose values are themselves comma-separated', () => {
+    const { options } = parseArgs(['--tags', 'defi,nft', '--tags', 'sports']);
+    expect(options.tags).toEqual(['defi,nft', 'sports']);
+    expect(parseCsvOption(options.tags, 'tags')).toEqual(['defi', 'nft', 'sports']);
+  });
+
+  it('keeps repeated single values and trims them', () => {
+    expect(parseCsvOption([' defi ', 'nft', ''], 'tags')).toEqual(['defi', 'nft']);
+  });
+
+  it('still rejects non-string values', () => {
+    expect(() => parseCsvOption(['defi', 1], 'tags')).toThrow('--tags values must be strings');
+    expect(() => parseCsvOption({ a: 1 }, 'tags')).toThrow('--tags must be a string');
+  });
 });
 
 describe('parseSort', () => {
