@@ -611,12 +611,16 @@ describe('sendTokens integration', () => {
     });
 
     test('tags RPC errors that mean the transaction cannot succeed, from the raw message', async () => {
+      // rpcCall is module-private; getTokenInfo is the cheapest exported
+      // caller that forwards its error unchanged, so it is the vehicle here.
+      // The classification does not depend on the method or the chain.
       const cases = [
         ['insufficient funds for gas * price + value', true],
         ['execution reverted: ERC20: transfer amount exceeds balance', true],
         ['Transaction results in an account with insufficient lamports', true],
         ['internal error: node is syncing', false],
         ['nonce too low', false],
+        ['Transaction was already processed and rolled back; state reverted to snapshot', false],
       ];
       for (const [message, expected] of cases) {
         fetch.mockImplementation(async () => ({ json: () => Promise.resolve({ error: { message } }) }));

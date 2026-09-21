@@ -95,7 +95,9 @@ function isTransactionFailureMessage(error) {
   const lower = String(error?.message || JSON.stringify(error)).toLowerCase();
   return lower.includes('insufficient funds')
     || lower.includes('insufficient lamports')
-    || lower.includes('reverted');
+    // geth/op-geth phrase every EVM revert as "execution reverted[: reason]";
+    // a bare "reverted" would also catch unrelated wording.
+    || lower.includes('execution reverted');
 }
 
 /**
