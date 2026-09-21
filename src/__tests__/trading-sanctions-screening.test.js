@@ -310,6 +310,21 @@ describe('trade execute compliance gate', () => {
     expect(quoteFile(quoteId).executedAt).toBeUndefined();
   });
 
+  it('--dry-run screens the recorded wallet before rendering a successful preview', async () => {
+    const wallet = '0x8CB9c3F23C7d600fB430bbd171a313D9ea61cEBc';
+    const events = [];
+    stubEvmBackend(events);
+    const api = mockApi(flagged(wallet), events);
+    const quoteId = saveEvmQuote({ walletAddress: wallet });
+
+    await expect(cmds().execute([], api, { ...flags, 'dry-run': true }, { quote: quoteId }))
+      .rejects.toMatchObject({ code: 'SANCTIONED' });
+
+    expect(events.map(e => e.kind)).toEqual(['screen']);
+    expect(fetch).not.toHaveBeenCalled();
+    expect(quoteFile(quoteId).executedAt).toBeUndefined();
+  });
+
   it('fails closed when screening is unavailable', async () => {
     const wallet = setupLocalWallet();
     const events = [];

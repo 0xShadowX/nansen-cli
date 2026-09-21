@@ -17,6 +17,7 @@ import { getWalletConnectAddress, sendTransactionViaWalletConnect, sendSolanaTra
 import { retrievePassword } from './keychain.js';
 import { validateQuoteInput, validateBalance, resolvePercentAmount, validateGasBalance, encodeApproveCalldata, assertValidApprovalSpender, assertQuoteMatchesRequest, assertSwapCalldataNotBareTransfer, assertSwapOutcome, assertSolanaInstructionsSafe, assertSolanaSwapOutcome, approvalAmountForSwap, needsAllowanceRevoke, OVERSIZED_ALLOWANCE_MULTIPLIER, EVM_BRIDGE_NATIVE_FEE_SLACK, isBridgeRequest } from './trade-validation.js';
 import { readCompactU16 } from './solana-tx.js';
+import { formatPlan, guardExecution, resolveExecuteGuard } from './execute-guard.js';
 export { readCompactU16 };
 import { CHAIN_RPCS } from './rpc-urls.js';
 import { simulateAssetChanges, SwapSimulationError, hasSimulationRpc } from './swap-simulation.js';
@@ -2020,6 +2021,282 @@ export function formatQuote(quote, index) {
   return lines.join('\n');
 }
 
+// ============= Execution plan (--dry-run / confirmation) =============
+
+/**
+ * Describe the swap `trade execute` is about to sign, for the confirmation
+ * prompt and for --dry-run. Reads only the cached quote and (on a dry run)
+ * read-only RPC state — it never touches wallet material, so a dry run works
+ * on a locked wallet and cannot sign anything.
+ *
+ * `probe` runs the extra read-only checks that only make sense when the user
+ * asked for a preview: the current ERC-20 allowance and the pre-broadcast
+ * revert simulation. Both degrade to a note if the endpoint is unavailable.
+ */
+export async function buildTradeExecutionPlan({
+  quoteId,
+  quoteData,
+  quote,
+  chainConfig,
+  quoteIndex = 0,
+  quoteCount = 1,
+  walletAddress = null,
+  gasless = false,
+  noSimulate = false,
+  noVerifyOutcome = false,
+  probe = false,
+}) {
+  const request = quoteData.request || {};
+  const chain = quoteData.chain;
+  const isNative = isNativeToken(quote.inputMint);
+  const spender = quote.approvalAddress && quote.approvalAddress !== '' && !isNative
+    ? quote.approvalAddress
+    : null;
+
+  let approval = isNative ? 'not required (native token input)' : 'not required';
+  let approvalPending = false;
+  if (spender) {
+    const approveAmt = approvalAmountForSwap({
+      inputAmount: quote.inputAmount || quote.inAmount || '0',
+      swapMode: quoteData.swapMode,
+      slippage: quoteData.slippage,
+    });
+    approval = `required → ${spender} (scoped to ${approveAmt} base units)`;
+    approvalPending = true;
+    if (probe && walletAddress) {
+      try {
+        const existing = await checkErc20Allowance(chain, quote.inputMint, walletAddress, spender);
+        if (existing >= approveAmt) {
+          approval = `already granted to ${spender} (${existing} base units) — no approval transaction needed`;
+          approvalPending = false;
+        } else {
+          approval += `; current allowance is ${existing}`;
+        }
+      } catch (err) {
+        approval += `; current allowance could not be read (${err.message})`;
+      }
+    }
+  }
+
+  // The revert simulation reads the CURRENT chain state, so it is only
+  // meaningful once the router can actually pull the input token. With an
+  // approval still outstanding it would report a revert that the real run
+  // never hits, so say so instead of simulating.
+  let simulation = null;
+  if (probe && chainConfig.type === 'evm') {
+    if (noSimulate) {
+      simulation = 'skipped (--no-simulate)';
+    } else if (gasless) {
+      simulation = 'skipped (--gasless routes through the solver)';
+    } else if (approvalPending) {
+      simulation = 'skipped — runs after the approval transaction lands';
+    } else {
+      try {
+        const tx = quote.transaction || {};
+        const sim = await simulateEvmCall(chain, {
+          from: walletAddress,
+          to: tx.to,
+          data: tx.data,
+          value: tx.value ? '0x' + BigInt(tx.value).toString(16) : '0x0',
+        });
+        simulation = sim.success ? 'passed' : `❌ FAILED: ${sim.reason}`;
+      } catch (err) {
+        simulation = `could not run (${err.message})`;
+      }
+    }
+  }
+
+  const toChain = quoteData.toChain;
+  const route = toChain && toChain !== chain
+    ? `${chainConfig.name} → ${resolveChain(toChain).name}`
+    : chainConfig.name;
+
+  return formatPlan(`Trade plan — ${route}`, [
+    ['Quote', `${quoteId}${quote.aggregator ? ` via ${quote.aggregator}` : ''}${quoteCount > 1 ? ` (quote ${quoteIndex + 1} of ${quoteCount})` : ''}`],
+    ['Sell', `${quote.inAmount ?? quote.inputAmount ?? '?'} base units of ${request.fromToken || quote.inputMint}`],
+    ['Buy', `~${quote.outAmount ?? '?'} base units of ${request.toToken || quote.outputMint}`],
+    ['Max spend', request.maxInputAmount ? `${request.maxInputAmount} base units` : null],
+    ['Wallet', walletAddress || 'the wallet this quote was created for'],
+    ['Recipient', request.recipient || null],
+    ['Trading fee', quote.tradingFeeInUsd ? `$${quote.tradingFeeInUsd}` : null],
+    ['Network fee', quote.networkFeeInUsd ? `$${quote.networkFeeInUsd}` : null],
+    ['Approval', approval],
+    ['Gas', gasless ? 'paid by the solver (--gasless)' : null],
+    ['Simulation', simulation],
+    ['Outcome check', noVerifyOutcome ? 'off (--no-verify-outcome)' : 'on, before broadcast'],
+  ]);
+}
+
+/**
+ * Run every execute validation that can be completed from a cached quote,
+ * public signer address, and read-only RPC calls. This intentionally does not
+ * resolve signing credentials, sign, broadcast, or consume the quote.
+ *
+ * Real execution repeats signer binding with the independently resolved live
+ * signer later. The preview uses the immutable signer saved with the request;
+ * this gives --dry-run the same transaction/intent checks without requiring a
+ * wallet password, Privy secret, or WalletConnect session.
+ */
+async function preflightTradeExecutionCandidate({
+  quoteData,
+  quote,
+  chain,
+  chainConfig,
+  walletAddress,
+  isWalletConnect,
+  gasless,
+  noSimulate,
+  noVerifyOutcome,
+  apiKey,
+  verifiedTargets,
+  log,
+}) {
+  if (gasless && quote.aggregator !== 'relay') {
+    throw new CommandError(
+      `--gasless is only supported for Relay quotes, not "${quote.aggregator}".`,
+      'GASLESS_UNSUPPORTED_AGGREGATOR',
+    );
+  }
+  if (gasless && isWalletConnect) {
+    throw new CommandError(
+      'Gasless swaps are not supported via WalletConnect. Use a local or Privy wallet.',
+      'GASLESS_UNSUPPORTED_WALLET',
+    );
+  }
+
+  if (!walletAddress) {
+    throw new CommandError(
+      'The cached quote has no signer address, so it cannot be validated safely. Request a new quote.',
+      'WALLET_MISMATCH',
+    );
+  }
+
+  if (chainConfig.type === 'solana') {
+    assertCompleteSolanaRequestIntent(quoteData.request);
+    assertQuoteMatchesRequest(quoteData.request, quote, {
+      chain,
+      walletAddress,
+      slippage: quoteData.slippage,
+    });
+    const txBase64 = await normalizeSolanaTransaction(
+      quote.transaction,
+      CHAIN_RPCS.solana,
+      async () => walletAddress,
+    );
+    assertSolanaInstructionsSafe(txBase64, { walletAddress });
+    if (!noVerifyOutcome) {
+      const outcome = await verifySolanaSwapOutcome({
+        chain,
+        walletAddress,
+        txBase64,
+        quote,
+        quoteData,
+        log,
+      });
+      if (!outcome.proceed) {
+        throw new CommandError(
+          `Swap-outcome verification failed: ${outcome.reason}`,
+          'OUTCOME_VERIFICATION_FAILED',
+        );
+      }
+    }
+    return;
+  }
+
+  await validateSwapTarget(chain, quote.transaction.to, quote.inputMint, { verifiedTargets });
+  assertCompleteEvmRequestIntent(quoteData.request);
+  assertQuoteMatchesRequest(quoteData.request, quote, {
+    chain,
+    walletAddress,
+    slippage: quoteData.slippage,
+  });
+  assertSwapCalldataNotBareTransfer(quote.transaction.data);
+
+  const nativeInput = isNativeToken(quote.inputMint);
+  const txValue = BigInt(quote.transaction.value || '0');
+  if (nativeInput) {
+    const expectedValue = BigInt(quote.inAmount || quote.inputAmount || '0');
+    if (txValue !== expectedValue) {
+      throw new CommandError(
+        `Transaction value mismatch: tx.value=${txValue}, expected=${expectedValue}`,
+        'AMOUNT_MISMATCH',
+      );
+    }
+  } else {
+    const bridgeFeeAllowed = quoteData?.request
+      && isBridgeRequest(quoteData.request)
+      && txValue <= EVM_BRIDGE_NATIVE_FEE_SLACK;
+    if (txValue > 0n && !bridgeFeeAllowed) {
+      throw new CommandError(
+        `ERC-20 swap has unexpected non-zero tx.value (${txValue}).`,
+        'AMOUNT_MISMATCH',
+      );
+    }
+  }
+
+  let approvalPending = false;
+  if (quote.approvalAddress && quote.approvalAddress !== '' && !nativeInput) {
+    assertUsableSpender(quote.approvalAddress);
+    const inputAmount = BigInt(quote.inputAmount || quote.inAmount || '0');
+    const approveAmt = approvalAmountForSwap({
+      inputAmount,
+      swapMode: quoteData.swapMode,
+      slippage: quoteData.slippage,
+    });
+    if (approveAmt <= 0n) {
+      throw new CommandError('Quote has a zero input amount, so its approval cannot be scoped safely.', 'INVALID_AMOUNT');
+    }
+    // Exercise the same spender/amount/cap encoder used immediately before a
+    // real approval is signed, but discard the calldata.
+    encodeApproveCalldata(quote.approvalAddress, approveAmt, {
+      maxAllowance: approvalCapForQuote(quoteData),
+    });
+    const existingAllowance = await checkErc20Allowance(
+      chain,
+      quote.inputMint,
+      walletAddress,
+      quote.approvalAddress,
+    );
+    approvalPending = existingAllowance < approveAmt;
+  }
+
+  // These checks require the router to be able to pull the input token. A real
+  // execute runs them after its approval lands; a preview with an outstanding
+  // approval cannot reproduce that future state and reports the deferral in
+  // its plan instead.
+  if (!approvalPending) {
+    if (!noSimulate && !gasless) {
+      const tx = quote.transaction;
+      const sim = await simulateEvmCall(chain, {
+        from: walletAddress,
+        to: tx.to,
+        data: tx.data,
+        value: tx.value ? '0x' + BigInt(tx.value).toString(16) : '0x0',
+      });
+      if (!sim.success) {
+        throw new CommandError(`Pre-broadcast simulation failed: ${sim.reason}`, 'SIMULATION_FAILED');
+      }
+    }
+    if (!noVerifyOutcome) {
+      const outcome = await verifySwapOutcome({
+        chain,
+        from: walletAddress,
+        quote,
+        quoteData,
+        apiKey,
+        log,
+      });
+      if (!outcome.proceed) {
+        throw new CommandError(
+          `Swap-outcome verification failed: ${outcome.reason}`,
+          'OUTCOME_VERIFICATION_FAILED',
+        );
+      }
+    }
+    await resolveEvmSwapGasLimit(quote, { chain, from: walletAddress });
+  }
+}
+
 // ============= CLI Command Builder =============
 
 // Addresses a swap must clear compliance screening for: the wallet that signs
@@ -2045,7 +2322,15 @@ export function tradeScreeningAddresses(...addresses) {
  * Build trading command handlers for CLI integration.
  */
 export function buildTradingCommands(deps = {}) {
-  const { log = console.log } = deps;
+  const {
+    log = console.log,
+    // Injected so the confirmation prompt (and whether there is anyone to
+    // answer it) can be driven in tests without a terminal.
+    promptFn,
+    confirmationLog = log,
+    isTTY = false,
+    env = process.env,
+  } = deps;
 
   return {
     'quote': async (args, apiInstance, flags, options) => {
@@ -2538,6 +2823,7 @@ CROSS-CHAIN NOTES (when using --to-chain):
       const noRevokeExcessiveAllowance = flags['no-revoke-excessive-allowance'];
       const noVerifyOutcome = flags['no-verify-outcome'];
       const gasless = Boolean(flags.gasless);
+      const guard = resolveExecuteGuard(flags, { env, isTTY });
       // Read the API key for the swap-outcome sim endpoint. It's optional (the
       // check degrades to a warning if the endpoint can't authenticate), so a
       // malformed config must not crash an in-progress trade — fall back to null.
@@ -2564,9 +2850,20 @@ OPTIONS:
   --no-revoke-excessive-allowance
                             Skip auto-revoking an oversized/legacy allowance before re-approving
   --gasless                 Relay-only: have Relay's solver pay gas (no WalletConnect)
+  --dry-run                 Validate and print what would be sent, then stop.
+                            Nothing is signed or broadcast and the quote stays usable.
+  --yes, -y                 Skip the confirmation prompt (same as NANSEN_YES=1).
+                            The prompt only appears when stdin is a terminal; agents,
+                            CI and pipes are never prompted, with or without --yes.
+
+EXIT CODES:
+  0  broadcast succeeded, or the dry run completed
+  1  declined at the confirmation prompt, or the execution failed
 
 EXAMPLES:
-  nansen trade execute --quote 1708900000000-abc123`, 'MISSING_ARGS');
+  nansen trade execute --quote 1708900000000-abc123
+  nansen trade execute --quote 1708900000000-abc123 --dry-run
+  nansen trade execute --quote 1708900000000-abc123 --yes`, 'MISSING_ARGS');
       }
 
       try {
@@ -2599,6 +2896,123 @@ EXAMPLES:
         if (!hasAnyTransaction) {
           throw new CommandError('❌ No quotes contain transaction data.\n  Ensure userWalletAddress was provided when fetching the quote.', 'NO_TRANSACTION');
         }
+
+        // ── Acknowledgement gate: --dry-run / --yes ──────────────────────
+        // Deliberately placed before any wallet material is loaded and before
+        // the first approval transaction: a dry run needs no password and can
+        // sign nothing, and a declined confirmation cannot have put an
+        // approval on-chain. See src/execute-guard.js for the TTY rules.
+        // Execution falls back across candidates when one fails before a
+        // definitive broadcast. Consent must therefore cover every candidate
+        // that may be signed, rather than displaying only the first one and
+        // silently broadcasting a different fallback quote later.
+        const planCandidates = allQuotes
+          .map((quote, index) => ({ quote, index }))
+          .filter(({ quote, index }) => index >= startIndex && index < endIndex && quote?.transaction);
+        const shouldPreflightPlan = guard.dryRun || (guard.isTTY && !guard.assumeYes);
+        const planUsesWalletConnect = quoteData.signerType === 'walletconnect'
+          || walletName === 'walletconnect' || walletName === 'wc';
+        if (guard.dryRun) {
+          // The live signer is intentionally unavailable here: dry-run reaches
+          // this gate before wallet material or a WalletConnect session is
+          // resolved. Screen the public signer recorded in the cached request
+          // (or legacy response metadata) plus its distinct recipient for the
+          // preview. Real execution resolves the live signer below and screens
+          // it again immediately before signing.
+          const previewScreenAddresses = tradeScreeningAddresses(
+            quoteData.request?.walletAddress || quoteData.response?.metadata?.userWalletAddress,
+            quoteData.request?.recipient,
+          );
+          if (!previewScreenAddresses.length) {
+            throw new CommandError(
+              `Quote "${quoteId}" does not record which wallet it was built for, so it cannot be screened. Request a fresh quote with "nansen trade quote".`,
+              'SCREENING_UNAVAILABLE',
+            );
+          }
+          await screenOrThrow(apiInstance, previewScreenAddresses);
+        }
+        const verifiedPlanTargets = new Set();
+        const validatedPlanCandidates = [];
+        let lastPreflightError = null;
+        for (const candidate of planCandidates) {
+          const planWallet = quoteData.request?.walletAddress
+            || quoteData.response?.metadata?.userWalletAddress
+            || candidate.quote.transaction?.from
+            || null;
+          try {
+            if (shouldPreflightPlan) {
+              await preflightTradeExecutionCandidate({
+                quoteData,
+                quote: candidate.quote,
+                chain,
+                chainConfig,
+                walletAddress: planWallet,
+                isWalletConnect: planUsesWalletConnect,
+                gasless,
+                noSimulate,
+                noVerifyOutcome,
+                apiKey,
+                verifiedTargets: verifiedPlanTargets,
+                log,
+              });
+            }
+            validatedPlanCandidates.push(candidate);
+          } catch (error) {
+            lastPreflightError = error;
+          }
+        }
+        if (!validatedPlanCandidates.length) {
+          throw new CommandError(
+            `\n❌ All quotes failed sign-free preflight. Last error: ${lastPreflightError?.message || 'unknown'}\n`,
+            'ALL_QUOTES_FAILED',
+          );
+        }
+        // Non-interactive/--yes execution never consumes the plan, so avoid
+        // building display strings (and their optional read-only probes) on
+        // that unchanged automation path. guardExecution safely ignores the
+        // empty plan whenever no preview or prompt is active.
+        let plan = '';
+        if (shouldPreflightPlan) {
+          const plans = [];
+          for (const { quote, index } of validatedPlanCandidates) {
+            const planWallet = quoteData.request?.walletAddress
+              || quoteData.response?.metadata?.userWalletAddress
+              || quote.transaction?.from
+              || null;
+            plans.push(await buildTradeExecutionPlan({
+              quoteId,
+              quoteData,
+              quote,
+              chainConfig,
+              quoteIndex: index,
+              quoteCount: allQuotes.length,
+              walletAddress: planWallet,
+              gasless,
+              noSimulate,
+              noVerifyOutcome,
+              probe: true,
+            }));
+          }
+          const fallbackNotice = validatedPlanCandidates.length > 1
+            ? '\n  The CLI may try these candidates in order until one broadcasts successfully.'
+            : '';
+          plan = `${plans.join('\n')}${fallbackNotice}`;
+        }
+        // An interactive user only consented to candidates that passed the
+        // sign-free preflight and appeared in this plan. Do not later retry a
+        // candidate omitted after a transient or deterministic preflight
+        // failure; it could otherwise recover and broadcast unseen.
+        const consentedCandidateIndexes = shouldPreflightPlan
+          ? new Set(validatedPlanCandidates.map(({ index }) => index))
+          : null;
+        const proceed = await guardExecution({
+          plan,
+          ...guard,
+          promptFn,
+          log,
+          confirmationLog,
+        });
+        if (!proceed) return undefined;
 
         // Determine if this is a WalletConnect or Privy-signed quote
         const isWalletConnect = quoteData.signerType === 'walletconnect'
@@ -2708,6 +3122,7 @@ EXAMPLES:
         const verifiedTargets = new Set();
 
         for (let qi = startIndex; qi < endIndex; qi++) {
+          if (consentedCandidateIndexes && !consentedCandidateIndexes.has(qi)) continue;
           const currentQuote = allQuotes[qi];
           if (!currentQuote) continue;
 
