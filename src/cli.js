@@ -217,11 +217,17 @@ export function parseArgs(args) {
       const next = hasInlineValue ? arg.slice(equalsIndex + 1) : args[i + 1];
       
       if (VALUELESS_FLAGS.has(key)) {
-        addFlag(key);
+        // Repeating a switch is idempotent. Keeping the value strictly true
+        // avoids leaking `[true, true]` into consumers that use `=== true`.
+        result.flags[key] = true;
       // `next !== undefined` rather than a truthiness check: an explicit empty
       // string is a real value, and skipping it here left `""` dangling to be
       // picked up as a positional arg on the next iteration.
-      } else if (next !== undefined && (!next.startsWith('-') || /^-\d/.test(next))) {
+      // An inline value was explicitly supplied and is always consumed, even
+      // when it begins with a dash; downstream option validation owns whether
+      // that value is meaningful. The dash guard applies only to two-token
+      // input, where `--key --next` denotes two separate arguments.
+      } else if (hasInlineValue || (next !== undefined && (!next.startsWith('-') || /^-\d/.test(next)))) {
         // Try to parse as JSON first (for objects/arrays/booleans),
         // but keep numeric strings as strings to avoid precision loss
         // and scientific notation for large integers (e.g. 1e+21).

@@ -91,6 +91,19 @@ describe('parseArgs', () => {
     }
   });
 
+  it('always consumes an explicitly inline value even when it starts with a dash', () => {
+    const result = parseArgs(['changelog', '--since=--bad']);
+    expect(result._).toEqual(['changelog']);
+    expect(result.options.since).toBe('--bad');
+    expect(result.flags.since).toBeUndefined();
+  });
+
+  it('keeps repeated valueless flags strictly boolean and idempotent', () => {
+    const result = parseArgs(['--help', '--help', '--pretty', '--pretty']);
+    expect(result.flags.help).toBe(true);
+    expect(result.flags.pretty).toBe(true);
+  });
+
   it('should handle flag followed by another flag', () => {
     const result = parseArgs(['--verbose', '--debug']);
     expect(result.flags.verbose).toBe(true);
