@@ -2699,6 +2699,56 @@ describe('buildCommands', () => {
       expect(result.error).toContain('Unknown subcommand');
     });
 
+    it('should pass top-tokens --limit as a safe integer', async () => {
+      const mockApi = {
+        topTokens: vi.fn().mockResolvedValue({ data: [] })
+      };
+      await commands['token'](['top-tokens'], mockApi, {}, { limit: '10' });
+
+      expect(mockApi.topTokens).toHaveBeenCalledWith({ marketCapGroup: undefined, limit: 10 });
+    });
+
+    it.each(['500abc', '2.5', 'abc'])(
+      'should reject malformed top-tokens --limit value %s before the handler runs',
+      async (limit) => {
+        const mockApi = {
+          topTokens: vi.fn().mockResolvedValue({ data: [] })
+        };
+
+        await expect(commands['token'](['top-tokens'], mockApi, {}, { limit })).rejects.toMatchObject({
+          code: ErrorCode.INVALID_PARAMS,
+          message: '--limit must be a positive integer',
+        });
+
+        expect(mockApi.topTokens).not.toHaveBeenCalled();
+      },
+    );
+
+    it('should reject unsafe top-tokens --limit before calling the API', async () => {
+      const mockApi = {
+        topTokens: vi.fn().mockResolvedValue({ data: [] })
+      };
+
+      await expect(commands['token'](['top-tokens'], mockApi, {}, { limit: '9007199254740992' }))
+        .rejects.toMatchObject({
+          code: ErrorCode.INVALID_PARAMS,
+          message: '--limit must be a safe integer; received: 9007199254740992',
+        });
+
+      expect(mockApi.topTokens).not.toHaveBeenCalled();
+    });
+
+    it('should reject bare top-tokens --limit', async () => {
+      const mockApi = {
+        topTokens: vi.fn().mockResolvedValue({ data: [] })
+      };
+
+      await expect(commands['token'](['top-tokens'], mockApi, { limit: true }, {}))
+        .rejects.toThrow('--limit requires a safe integer value');
+
+      expect(mockApi.topTokens).not.toHaveBeenCalled();
+    });
+
     it('should call screener with chains and timeframe', async () => {
       const mockApi = {
         tokenScreener: vi.fn().mockResolvedValue({ data: [] })
@@ -4828,6 +4878,43 @@ describe('profiler batch command', () => {
     expect(mockApi.addressBalance).toHaveBeenCalledTimes(2);
   });
 
+  it.each(['500abc', '2.5', 'abc', '9007199254740992'])(
+    'should reject malformed --delay value %s before running profiler batch',
+    async (delay) => {
+      const mockApi = {
+        addressLabels: vi.fn().mockResolvedValue({ labels: [] }),
+        addressBalance: vi.fn().mockResolvedValue({ balances: [] }),
+      };
+      const commands = buildCommands({});
+
+      await expect(commands['profiler'](['batch'], mockApi, {}, {
+        addresses: '0x0000000000000000000000000000000000000001',
+        delay,
+      })).rejects.toMatchObject({
+        code: ErrorCode.INVALID_PARAMS,
+        message: '--delay must be a safe integer; received: ' + delay,
+      });
+
+      expect(mockApi.addressLabels).not.toHaveBeenCalled();
+      expect(mockApi.addressBalance).not.toHaveBeenCalled();
+    },
+  );
+
+  it('should reject bare --delay before running profiler batch', async () => {
+    const mockApi = {
+      addressLabels: vi.fn().mockResolvedValue({ labels: [] }),
+      addressBalance: vi.fn().mockResolvedValue({ balances: [] }),
+    };
+    const commands = buildCommands({});
+
+    await expect(commands['profiler'](['batch'], mockApi, { delay: true }, {
+      addresses: '0x0000000000000000000000000000000000000001',
+    })).rejects.toThrow('--delay requires a safe integer value');
+
+    expect(mockApi.addressLabels).not.toHaveBeenCalled();
+    expect(mockApi.addressBalance).not.toHaveBeenCalled();
+  });
+
   it('should parse custom include parameter', async () => {
     const mockApi = {
       addressLabels: vi.fn().mockResolvedValue({ labels: [] }),
@@ -4926,6 +5013,39 @@ describe('profiler trace command', () => {
     expect(mockApi.addressCounterparties).toHaveBeenCalledWith(expect.objectContaining({
       pagination: { page: 1, per_page: 5 },
     }));
+  });
+
+  it.each(['500abc', '2.5', 'abc', '9007199254740992'])(
+    'should reject malformed --delay value %s before tracing counterparties',
+    async (delay) => {
+      const mockApi = {
+        addressCounterparties: vi.fn().mockResolvedValue({ counterparties: [] }),
+      };
+      const commands = buildCommands({});
+
+      await expect(commands['profiler'](['trace'], mockApi, {}, {
+        address: '0x0000000000000000000000000000000000000001',
+        delay,
+      })).rejects.toMatchObject({
+        code: ErrorCode.INVALID_PARAMS,
+        message: '--delay must be a safe integer; received: ' + delay,
+      });
+
+      expect(mockApi.addressCounterparties).not.toHaveBeenCalled();
+    },
+  );
+
+  it('should reject bare --delay before tracing counterparties', async () => {
+    const mockApi = {
+      addressCounterparties: vi.fn().mockResolvedValue({ counterparties: [] }),
+    };
+    const commands = buildCommands({});
+
+    await expect(commands['profiler'](['trace'], mockApi, { delay: true }, {
+      address: '0x0000000000000000000000000000000000000001',
+    })).rejects.toThrow('--delay requires a safe integer value');
+
+    expect(mockApi.addressCounterparties).not.toHaveBeenCalled();
   });
 
   it('should clamp depth to 1-5 range', async () => {

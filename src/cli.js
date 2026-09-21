@@ -1600,7 +1600,7 @@ export function buildCommands(deps = {}) {
           }
           const parsedInclude = parseCsvOption(options.include, 'include');
           const include = (parsedInclude && parsedInclude.length > 0) ? parsedInclude : ['labels', 'balance'];
-          const delayMs = options.delay ? parseInt(options.delay) : 1000;
+          const delayMs = parseSafeIntegerOption('delay', options, flags, 1000);
           return batchProfile(apiInstance, { addresses, chain, include, delayMs });
         },
         'trace': () => {
@@ -1614,7 +1614,7 @@ export function buildCommands(deps = {}) {
           }
           const depth = options.depth ?? 2;
           const width = parseNonNegativeSafeIntegerOption('width', options, flags, 10);
-          const delayMs = options.delay ? parseInt(options.delay) : 1000;
+          const delayMs = parseSafeIntegerOption('delay', options, flags, 1000);
           return traceCounterparties(apiInstance, { address, chain, depth, width, days, delayMs });
         },
         'compare': () => {
@@ -1753,7 +1753,7 @@ export function buildCommands(deps = {}) {
         },
         'top-tokens': () => {
           const marketCapGroup = options['market-cap'] || options['market-cap-group'];
-          const limit = options.limit ? parseInt(options.limit) : undefined;
+          const limit = parseSafeIntegerOption('limit', options, flags);
           return apiInstance.topTokens({ marketCapGroup, limit });
         },
         'help': () => ({
