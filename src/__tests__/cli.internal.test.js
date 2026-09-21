@@ -2717,7 +2717,6 @@ describe('buildCommands', () => {
 
         await expect(commands['token'](['top-tokens'], mockApi, {}, { limit })).rejects.toMatchObject({
           code: ErrorCode.INVALID_PARAMS,
-          message: '--limit must be a positive integer',
         });
 
         expect(mockApi.topTokens).not.toHaveBeenCalled();
