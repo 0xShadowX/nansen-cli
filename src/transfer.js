@@ -334,7 +334,16 @@ export async function getTokenInfo(rpcUrl, mint) {
   if (!info || !info.value) throw new Error(`Token mint ${mint} not found`);
   const owner = info.value.owner;
   const decimals = info.value.data?.parsed?.info?.decimals;
-  return { tokenProgram: owner, decimals: decimals ?? 9 };
+  // The decimals scale every human-readable --amount into base units, so a
+  // guess is never safe. When the RPC cannot jsonParse the mint (an owner
+  // program it does not know, or raw base64 data) the account is not a mint
+  // we can size a transfer for — say so instead of assuming 9 decimals.
+  if (!Number.isInteger(decimals) || decimals < 0) {
+    throw new Error(
+      `Could not determine decimals for token mint ${mint}: the RPC did not return parsed token data (owner ${owner ?? 'unknown'}). Check that the address is an SPL token mint, or try a different Solana RPC.`,
+    );
+  }
+  return { tokenProgram: owner, decimals };
 }
 
 /**

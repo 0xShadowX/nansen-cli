@@ -16,6 +16,7 @@ import {
   validateSolanaAddress,
   bigIntToHex,
   buildUnsignedSolanaTransaction,
+  getTokenInfo,
 } from '../transfer.js';
 import { signSecp256k1, rlpEncode } from '../crypto.js';
 import { base58Encode } from '../wallet.js';
@@ -523,7 +524,43 @@ describe('sendTokens integration', () => {
     });
   });
 
-  describe('Error handling', () => {
+  describe('getTokenInfo', () => {
+  const MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+  const TOKEN_2022 = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEHpdXxn';
+
+  function mockAccountInfo(value) {
+    fetch.mockImplementation(async () => ({ json: () => Promise.resolve({ jsonrpc: '2.0', id: 1, result: { value, context: { slot: 1 } } }) }));
+  }
+
+  test('returns the owner program and parsed decimals', async () => {
+    mockAccountInfo({ owner: TOKEN_2022, data: { parsed: { info: { decimals: 6 } } } });
+    await expect(getTokenInfo('https://rpc.test', MINT)).resolves.toEqual({ tokenProgram: TOKEN_2022, decimals: 6 });
+  });
+
+  test('accepts a zero-decimal mint', async () => {
+    mockAccountInfo({ owner: TOKEN_2022, data: { parsed: { info: { decimals: 0 } } } });
+    await expect(getTokenInfo('https://rpc.test', MINT)).resolves.toMatchObject({ decimals: 0 });
+  });
+
+  // This used to default to 9 decimals, scaling the user's --amount by the
+  // wrong power of ten and only failing on-chain in TransferChecked.
+  test('fails instead of guessing 9 decimals when the RPC returns unparsed mint data', async () => {
+    mockAccountInfo({ owner: TOKEN_2022, data: ['AAAA', 'base64'] });
+    await expect(getTokenInfo('https://rpc.test', MINT)).rejects.toThrow(/Could not determine decimals.*did not return parsed token data/);
+  });
+
+  test('fails when parsed data carries no decimals field', async () => {
+    mockAccountInfo({ owner: TOKEN_2022, data: { parsed: { info: { supply: '1' } } } });
+    await expect(getTokenInfo('https://rpc.test', MINT)).rejects.toThrow(/Could not determine decimals/);
+  });
+
+  test('still reports a missing mint account', async () => {
+    mockAccountInfo(null);
+    await expect(getTokenInfo('https://rpc.test', MINT)).rejects.toThrow('not found');
+  });
+});
+
+describe('Error handling', () => {
     test('rejects invalid EVM address', async () => {
       await expect(sendTokens({ to: 'bad', amount: '1', chain: 'evm', password: 'test' })).rejects.toThrow('Invalid recipient');
     });
