@@ -83,6 +83,14 @@ describe('parseArgs', () => {
     expect(result.flags.help).toBe(true);
   });
 
+  it('rejects inline values for valueless flags instead of creating stale flag names', () => {
+    for (const arg of ['--help=false', '--pretty=true', '--no-cache=1', '--help=']) {
+      expect(() => parseArgs([arg])).toThrowError(
+        expect.objectContaining({ code: 'INVALID_PARAMS' })
+      );
+    }
+  });
+
   it('should handle flag followed by another flag', () => {
     const result = parseArgs(['--verbose', '--debug']);
     expect(result.flags.verbose).toBe(true);

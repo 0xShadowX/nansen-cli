@@ -16,7 +16,27 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { resolveBooleanOption, parseArgs, generateSubcommandHelp, buildCommands } from '../cli.js';
+import { resolveBooleanOption, parseArgs, generateSubcommandHelp, buildCommands, runCLI } from '../cli.js';
+
+describe('valueless inline flag errors', () => {
+  it('returns a structured non-zero error for --help=false', async () => {
+    const output = vi.fn();
+    const exit = vi.fn();
+
+    const result = await runCLI(['--help=false'], { output, exit });
+
+    expect(result).toMatchObject({
+      type: 'error',
+      data: { code: 'INVALID_PARAMS', error: '--help does not accept a value' },
+    });
+    expect(exit).toHaveBeenCalledWith(1);
+    expect(JSON.parse(output.mock.calls[0][0])).toMatchObject({
+      success: false,
+      code: 'INVALID_PARAMS',
+      error: '--help does not accept a value',
+    });
+  });
+});
 
 describe('resolveBooleanOption', () => {
   // How the value reaches the handler depends on parseArgs: a bare `--flag`

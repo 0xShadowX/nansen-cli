@@ -204,11 +204,15 @@ export function parseArgs(args) {
     if (arg.startsWith('--')) {
       const equalsIndex = arg.indexOf('=');
       const inlineKey = equalsIndex === -1 ? null : arg.slice(2, equalsIndex);
-      // Keep valueless switches valueless: `--help=false` must not turn into
-      // an option that bypasses help. Value-taking options, including boolean
-      // options handled by resolveBooleanOption(), accept the conventional
-      // `--key=value` spelling.
-      const hasInlineValue = inlineKey !== null && !VALUELESS_FLAGS.has(inlineKey);
+      // `--help=false` is neither help nor a meaningful false value: valueless
+      // switches only accept their bare spelling. Reject it instead of leaking
+      // a stale `flags['help=false']` key that no handler will ever inspect.
+      if (inlineKey !== null && VALUELESS_FLAGS.has(inlineKey)) {
+        throw new NansenError(`--${inlineKey} does not accept a value`, ErrorCode.INVALID_PARAMS);
+      }
+      // Value-taking options, including boolean options handled by
+      // resolveBooleanOption(), accept the conventional `--key=value` spelling.
+      const hasInlineValue = inlineKey !== null;
       const key = hasInlineValue ? inlineKey : arg.slice(2);
       const next = hasInlineValue ? arg.slice(equalsIndex + 1) : args[i + 1];
       
@@ -2115,7 +2119,16 @@ export async function runCLI(rawArgs, deps = {}) {
     isTTY = process.stdout.isTTY,
   } = deps;
 
-  const { _: positional, flags, options } = parseArgs(rawArgs);
+  let parsed;
+  try {
+    parsed = parseArgs(rawArgs);
+  } catch (error) {
+    const errorData = formatError(error);
+    output(formatOutput(errorData).text);
+    exit(1);
+    return { type: 'error', data: errorData };
+  }
+  const { _: positional, flags, options } = parsed;
 
   // Resolve command aliases
   const rawCommand = positional[0] || 'help';
