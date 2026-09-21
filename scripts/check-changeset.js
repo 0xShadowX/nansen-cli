@@ -73,6 +73,15 @@ export function findNewChangesets(baseRef, cwd = process.cwd()) {
   return output ? output.split("\n") : [];
 }
 
+/** Added, copied, modified, or renamed changesets that still exist in the working tree. */
+export function findChangedChangesets(baseRef, cwd = process.cwd()) {
+  const output = git(
+    ["diff", baseRef, "--name-only", "--diff-filter=ACMR", "--", CHANGESET_GLOB],
+    cwd
+  );
+  return output ? output.split("\n") : [];
+}
+
 /** Changeset files whose frontmatter does not reference this package. */
 export function findInvalidChangesets(files, cwd = process.cwd()) {
   return files.filter((file) => {
@@ -93,6 +102,20 @@ export function run(cwd = process.cwd(), log = console.error) {
     }
     if (isOnBase(baseRef, cwd)) return 0;
 
+    // Validate every changeset the branch leaves changed, not only additions.
+    // Otherwise a modified or renamed pending changeset could name the wrong
+    // package and silently skip its version bump at release time.
+    const changedChangesets = findChangedChangesets(baseRef, cwd);
+    const invalid = findInvalidChangesets(changedChangesets, cwd);
+    for (const file of invalid) {
+      log(
+        red(`[changeset] ERROR: ${file} has incorrect or missing package reference.`) + "\n" +
+        red('  Expected: "nansen-cli": <patch|minor|major>') + "\n" +
+        red("  An invalid package name will silently skip the version bump during release.")
+      );
+    }
+    if (invalid.length > 0) return 1;
+
     const newChangesets = findNewChangesets(baseRef, cwd);
     if (newChangesets.length === 0) {
       log(yellow(
@@ -102,15 +125,7 @@ export function run(cwd = process.cwd(), log = console.error) {
       return 0;
     }
 
-    const invalid = findInvalidChangesets(newChangesets, cwd);
-    for (const file of invalid) {
-      log(
-        red(`[changeset] ERROR: ${file} has incorrect or missing package reference.`) + "\n" +
-        red('  Expected: "nansen-cli": <patch|minor|major>') + "\n" +
-        red("  An invalid package name will silently skip the version bump during release.")
-      );
-    }
-    return invalid.length > 0 ? 1 : 0;
+    return 0;
   } catch (err) {
     // Not a git repo, git not installed, unreadable changeset, etc. Say so
     // rather than swallowing it, but do not fail the test run over it.

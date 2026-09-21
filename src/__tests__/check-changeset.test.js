@@ -6,13 +6,14 @@
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import {
   BASE_CANDIDATES,
+  findChangedChangesets,
   findNewChangesets,
   isOnBase,
   resolveBaseRef,
@@ -88,6 +89,11 @@ beforeAll(() => {
   git(upstream, 'symbolic-ref', 'HEAD', 'refs/heads/main');
   writeFileSync(join(upstream, '.changeset', 'README.md'), 'changesets live here\n');
   writeFileSync(join(upstream, 'package.json'), '{ "name": "fixture" }\n');
+  writeChangeset(upstream, 'existing');
+  writeFileSync(
+    join(upstream, '.changeset', 'existing.md'),
+    `---\n"nansen-cli": patch\n---\n\n${'existing release note content\n'.repeat(10)}`
+  );
   commitAll(upstream, 'initial');
 
   git(upstream, 'checkout', '-q', '-b', 'no-changeset', 'main');
@@ -164,6 +170,47 @@ describe('check-changeset: outcomes', () => {
     expect(result.exitCode).toBe(1);
     expect(result.output).toContain(INVALID_ERROR);
     expect(result.output).toContain('.changeset/wrong-package.md');
+  });
+
+  it('fails when a branch corrupts an existing changeset package reference', () => {
+    const dir = fullClone('modified-existing', 'no-changeset');
+    writeChangeset(dir, 'existing', '"some-other-package"');
+    expect(findNewChangesets('origin/main', dir)).toEqual([]);
+    expect(findChangedChangesets('origin/main', dir)).toEqual(['.changeset/existing.md']);
+
+    const result = check(dir);
+    expect(result.exitCode).toBe(1);
+    expect(result.output).toContain(INVALID_ERROR);
+    expect(result.output).toContain('.changeset/existing.md');
+  });
+
+  it('fails when a branch renames an existing changeset with a wrong package reference', () => {
+    const dir = fullClone('renamed-existing', 'no-changeset');
+    const contents = readFileSync(join(dir, '.changeset', 'existing.md'), 'utf8');
+    git(dir, 'mv', '.changeset/existing.md', '.changeset/renamed-existing.md');
+    writeFileSync(
+      join(dir, '.changeset', 'renamed-existing.md'),
+      contents.replace('"nansen-cli"', '"some-other-package"')
+    );
+    expect(findNewChangesets('origin/main', dir)).toEqual([]);
+    expect(findChangedChangesets('origin/main', dir)).toEqual(['.changeset/renamed-existing.md']);
+
+    const result = check(dir);
+    expect(result.exitCode).toBe(1);
+    expect(result.output).toContain(INVALID_ERROR);
+    expect(result.output).toContain('.changeset/renamed-existing.md');
+  });
+
+  it('still warns when an existing changeset is only edited or deleted', () => {
+    const modified = fullClone('modified-valid-existing', 'no-changeset');
+    const file = join(modified, '.changeset', 'existing.md');
+    writeFileSync(file, `${readFileSync(file, 'utf8')}More release detail.\n`);
+    expect(check(modified).output).toContain(MISSING_WARNING);
+
+    const deleted = fullClone('deleted-existing', 'no-changeset');
+    rmSync(join(deleted, '.changeset', 'existing.md'));
+    expect(findChangedChangesets('origin/main', deleted)).toEqual([]);
+    expect(check(deleted).output).toContain(MISSING_WARNING);
   });
 
   it('counts a changeset that is staged but not yet committed', () => {
