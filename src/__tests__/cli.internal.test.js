@@ -2723,6 +2723,16 @@ describe('buildCommands', () => {
       );
     });
 
+    it('should page nested client-side search results with --page and --limit', async () => {
+      const data = Array.from({ length: 30 }, (_, i) => ({ token_symbol: 'PEPE' + i, price_usd: i }));
+      const mockApi = { tokenScreener: vi.fn().mockResolvedValue({ data: { data, pagination: { page: 1 } } }) };
+
+      const page2 = await commands['token'](['screener'], mockApi, {}, { chain: 'ethereum', search: 'pepe', limit: '10', page: '2' });
+
+      expect(page2.data.data.map(t => t.token_symbol)).toEqual(data.slice(10, 20).map(t => t.token_symbol));
+      expect(page2.data.pagination.page).toBe(1);
+    });
+
     it('should widen the search candidate fetch when the requested page is past the default 500', async () => {
       const mockApi = { tokenScreener: vi.fn().mockResolvedValue({ data: [] }) };
       await commands['token'](['screener'], mockApi, {}, { chain: 'ethereum', search: 'pepe', limit: '100', page: '7' });
