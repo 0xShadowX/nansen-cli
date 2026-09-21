@@ -49,12 +49,20 @@ export const SCHEMA = { version: VERSION, ...schemaDefinition };
  * Returns true/false/undefined (undefined = not supplied).
  */
 export function resolveBooleanOption(options, flags, key) {
-  if (options[key] !== undefined) {
-    const val = String(options[key]).toLowerCase();
+  const optionValue = options[key];
+  const flagValue = flags[key];
+
+  if (Array.isArray(optionValue) || Array.isArray(flagValue) ||
+      (optionValue !== undefined && flagValue !== undefined)) {
+    throw new NansenError(`--${key} cannot be repeated`, ErrorCode.INVALID_PARAMS);
+  }
+  if (optionValue !== undefined) {
+    const val = String(optionValue).toLowerCase();
     if (val === 'true' || val === '1') return true;
     if (val === 'false' || val === '0') return false;
+    throw new NansenError(`--${key} must be true or false`, ErrorCode.INVALID_PARAMS);
   }
-  if (flags[key] !== undefined) return Boolean(flags[key]);
+  if (flagValue !== undefined) return Boolean(flagValue);
   return undefined;
 }
 
@@ -180,16 +188,32 @@ export const VALUELESS_FLAGS = new Set([
 
 export function parseArgs(args) {
   const result = { _: [], flags: {}, options: {} };
+
+  const addFlag = (key) => {
+    if (key in result.flags) {
+      if (!Array.isArray(result.flags[key])) result.flags[key] = [result.flags[key]];
+      result.flags[key].push(true);
+    } else {
+      result.flags[key] = true;
+    }
+  };
   
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     
     if (arg.startsWith('--')) {
-      const key = arg.slice(2);
-      const next = args[i + 1];
+      const equalsIndex = arg.indexOf('=');
+      const inlineKey = equalsIndex === -1 ? null : arg.slice(2, equalsIndex);
+      // Keep valueless switches valueless: `--help=false` must not turn into
+      // an option that bypasses help. Value-taking options, including boolean
+      // options handled by resolveBooleanOption(), accept the conventional
+      // `--key=value` spelling.
+      const hasInlineValue = inlineKey !== null && !VALUELESS_FLAGS.has(inlineKey);
+      const key = hasInlineValue ? inlineKey : arg.slice(2);
+      const next = hasInlineValue ? arg.slice(equalsIndex + 1) : args[i + 1];
       
       if (VALUELESS_FLAGS.has(key)) {
-        result.flags[key] = true;
+        addFlag(key);
       // `next !== undefined` rather than a truthiness check: an explicit empty
       // string is a real value, and skipping it here left `""` dangling to be
       // picked up as a positional arg on the next iteration.
@@ -204,7 +228,7 @@ export function parseArgs(args) {
         } catch {
           parsedValue = next;
         }
-        i++;
+        if (!hasInlineValue) i++;
         // Accumulate repeated options into arrays (supports repeatable flags like --token, --subject)
         if (key in result.options) {
           if (!Array.isArray(result.options[key])) {
@@ -215,10 +239,10 @@ export function parseArgs(args) {
           result.options[key] = parsedValue;
         }
       } else {
-        result.flags[key] = true;
+        addFlag(key);
       }
     } else if (arg.startsWith('-')) {
-      result.flags[arg.slice(1)] = true;
+      addFlag(arg.slice(1));
     } else {
       result._.push(arg);
     }

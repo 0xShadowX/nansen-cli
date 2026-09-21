@@ -47,6 +47,7 @@ describe('resolveBooleanOption', () => {
   it('reads an explicit false value as false, not as "flag present, so true"', () => {
     expect(viaArgs(['--premium-labels', 'false'])).toBe(false);
     expect(viaArgs(['--premium-labels', '0'])).toBe(false);
+    expect(viaArgs(['--premium-labels=false'])).toBe(false);
     expect(resolveBooleanOption({ 'premium-labels': 'false' }, {}, 'premium-labels')).toBe(false);
     expect(resolveBooleanOption({ 'premium-labels': false }, {}, 'premium-labels')).toBe(false);
   });
@@ -64,26 +65,43 @@ describe('resolveBooleanOption', () => {
     expect(resolveBooleanOption({}, {}, 'premium-labels')).toBeUndefined();
   });
 
-  it('never turns an unrecognised value into true', () => {
-    // Whatever the eventual handling of a junk value is (see the skipped
-    // test below), the one outcome that must never happen is silently
-    // opting the caller *into* a paid/premium switch they did not ask for.
+  it('rejects an unrecognised or blank value instead of silently ignoring it', () => {
     for (const value of ['yes', 'no', 'on', 'off', '', '2']) {
-      expect(resolveBooleanOption({ 'premium-labels': value }, {}, 'premium-labels')).not.toBe(true);
+      expect(() => resolveBooleanOption({ 'premium-labels': value }, {}, 'premium-labels'))
+        .toThrow('--premium-labels must be true or false');
     }
-    expect(viaArgs(['--premium-labels', 'yes'])).not.toBe(true);
+    expect(() => viaArgs(['--premium-labels', 'yes']))
+      .toThrow('--premium-labels must be true or false');
   });
 
-  // KNOWN GAP: an unrecognised, blank, or repeated value is silently treated
-  // as "option absent" instead of being rejected, so `--premium-labels yes`
-  // and `--premium-labels ""` quietly fall back to the server default.
-  it.skip('rejects an unrecognised value instead of silently ignoring it', () => {
-    expect(() => resolveBooleanOption({ 'premium-labels': 'yes' }, {}, 'premium-labels'))
-      .toThrow(/premium-labels/);
-    expect(() => resolveBooleanOption({ 'premium-labels': '' }, {}, 'premium-labels'))
-      .toThrow(/premium-labels/);
-    expect(() => resolveBooleanOption({ 'premium-labels': ['true', 'false'] }, {}, 'premium-labels'))
-      .toThrow(/premium-labels/);
+  it('rejects repeated boolean values instead of falling back to the server default', () => {
+    for (const argv of [
+      ['--premium-labels', 'true', '--premium-labels', 'false'],
+      ['--premium-labels=true', '--premium-labels=false'],
+      ['--premium-labels', '--premium-labels'],
+      ['--premium-labels', '--premium-labels', 'false'],
+    ]) {
+      expect(() => viaArgs(argv)).toThrow('--premium-labels cannot be repeated');
+    }
+  });
+
+  it('preserves --flag=false through a real command handler', async () => {
+    const api = { pmMarketScreener: vi.fn(async () => ({ data: [] })) };
+    const { _: args, flags, options } = parseArgs(['market-screener', '--neg-risk=false']);
+    await buildCommands({})['prediction-market'](args, api, flags, options);
+
+    expect(api.pmMarketScreener).toHaveBeenCalledWith(
+      expect.objectContaining({ negRisk: false })
+    );
+  });
+
+  it('rejects a malformed boolean before the command calls the API', async () => {
+    const api = { pmMarketScreener: vi.fn(async () => ({ data: [] })) };
+    const { _: args, flags, options } = parseArgs(['market-screener', '--neg-risk=yes']);
+
+    await expect(buildCommands({})['prediction-market'](args, api, flags, options))
+      .rejects.toMatchObject({ code: 'INVALID_PARAMS', message: '--neg-risk must be true or false' });
+    expect(api.pmMarketScreener).not.toHaveBeenCalled();
   });
 });
 
@@ -302,6 +320,12 @@ describe('changelog --since filtering', () => {
     const commands = buildCommands({ log: m => logs.push(m), exit: vi.fn() });
     return commands.changelog([], null, {}, options).then(() => logs.join('\n'));
   };
+
+  it('parses the conventional --since=<version> spelling as an option value', () => {
+    const parsed = parseArgs(['changelog', '--since=1.10.0']);
+    expect(parsed.options.since).toBe('1.10.0');
+    expect(parsed.flags).not.toHaveProperty('since=1.10.0');
+  });
 
   it('keeps the requested version and everything newer, and drops everything older', async () => {
     const out = await runChangelog({ since: '1.10.0' });
