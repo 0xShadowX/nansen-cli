@@ -125,10 +125,10 @@ function friendlyRpcError(error, method = '') {
  * gas on a transaction the node already said will fail, so let it propagate.
  */
 function isDoomedTransactionError(err) {
+  // Errors arrive here already rewritten by friendlyRpcError, so match its
+  // wording for the EVM insufficient-funds case rather than the raw RPC text.
   const lower = String(err?.message || '').toLowerCase();
-  return lower.includes('insufficient native balance')
-    || lower.includes('insufficient funds')
-    || lower.includes('reverted');
+  return lower.includes('insufficient native balance') || lower.includes('reverted');
 }
 
 function bigIntToHex(n) {
