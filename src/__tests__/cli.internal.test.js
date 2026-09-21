@@ -2731,7 +2731,20 @@ describe('buildCommands', () => {
       await expect(commands['token'](['top-tokens'], mockApi, {}, { limit: '9007199254740992' }))
         .rejects.toMatchObject({
           code: ErrorCode.INVALID_PARAMS,
-          message: '--limit must be a safe integer; received: 9007199254740992',
+          message: '--limit must be a non-negative safe integer; received: 9007199254740992',
+        });
+
+      expect(mockApi.topTokens).not.toHaveBeenCalled();
+    });
+
+    it('should reject negative top-tokens --limit before calling the API', async () => {
+      const mockApi = {
+        topTokens: vi.fn().mockResolvedValue({ data: [] })
+      };
+
+      await expect(commands['token'](['top-tokens'], mockApi, {}, { limit: '-5' }))
+        .rejects.toMatchObject({
+          code: ErrorCode.INVALID_PARAMS,
         });
 
       expect(mockApi.topTokens).not.toHaveBeenCalled();
@@ -2743,7 +2756,7 @@ describe('buildCommands', () => {
       };
 
       await expect(commands['token'](['top-tokens'], mockApi, { limit: true }, {}))
-        .rejects.toThrow('--limit requires a safe integer value');
+        .rejects.toThrow('--limit requires a non-negative safe integer value');
 
       expect(mockApi.topTokens).not.toHaveBeenCalled();
     });
@@ -4891,13 +4904,32 @@ describe('profiler batch command', () => {
         delay,
       })).rejects.toMatchObject({
         code: ErrorCode.INVALID_PARAMS,
-        message: '--delay must be a safe integer; received: ' + delay,
+        message: '--delay must be a non-negative safe integer; received: ' + delay,
       });
 
       expect(mockApi.addressLabels).not.toHaveBeenCalled();
       expect(mockApi.addressBalance).not.toHaveBeenCalled();
     },
   );
+
+  it('should reject negative --delay before running profiler batch', async () => {
+    const mockApi = {
+      addressLabels: vi.fn().mockResolvedValue({ labels: [] }),
+      addressBalance: vi.fn().mockResolvedValue({ balances: [] }),
+    };
+    const commands = buildCommands({});
+
+    await expect(commands['profiler'](['batch'], mockApi, {}, {
+      addresses: '0x0000000000000000000000000000000000000001',
+      delay: '-5',
+    })).rejects.toMatchObject({
+      code: ErrorCode.INVALID_PARAMS,
+      message: '--delay must be a non-negative safe integer; received: -5',
+    });
+
+    expect(mockApi.addressLabels).not.toHaveBeenCalled();
+    expect(mockApi.addressBalance).not.toHaveBeenCalled();
+  });
 
   it('should reject bare --delay before running profiler batch', async () => {
     const mockApi = {
@@ -4908,7 +4940,7 @@ describe('profiler batch command', () => {
 
     await expect(commands['profiler'](['batch'], mockApi, { delay: true }, {
       addresses: '0x0000000000000000000000000000000000000001',
-    })).rejects.toThrow('--delay requires a safe integer value');
+    })).rejects.toThrow('--delay requires a non-negative safe integer value');
 
     expect(mockApi.addressLabels).not.toHaveBeenCalled();
     expect(mockApi.addressBalance).not.toHaveBeenCalled();
@@ -5027,12 +5059,29 @@ describe('profiler trace command', () => {
         delay,
       })).rejects.toMatchObject({
         code: ErrorCode.INVALID_PARAMS,
-        message: '--delay must be a safe integer; received: ' + delay,
+        message: '--delay must be a non-negative safe integer; received: ' + delay,
       });
 
       expect(mockApi.addressCounterparties).not.toHaveBeenCalled();
     },
   );
+
+  it('should reject negative --delay before tracing counterparties', async () => {
+    const mockApi = {
+      addressCounterparties: vi.fn().mockResolvedValue({ counterparties: [] }),
+    };
+    const commands = buildCommands({});
+
+    await expect(commands['profiler'](['trace'], mockApi, {}, {
+      address: '0x0000000000000000000000000000000000000001',
+      delay: '-5',
+    })).rejects.toMatchObject({
+      code: ErrorCode.INVALID_PARAMS,
+      message: '--delay must be a non-negative safe integer; received: -5',
+    });
+
+    expect(mockApi.addressCounterparties).not.toHaveBeenCalled();
+  });
 
   it('should reject bare --delay before tracing counterparties', async () => {
     const mockApi = {
@@ -5042,7 +5091,7 @@ describe('profiler trace command', () => {
 
     await expect(commands['profiler'](['trace'], mockApi, { delay: true }, {
       address: '0x0000000000000000000000000000000000000001',
-    })).rejects.toThrow('--delay requires a safe integer value');
+    })).rejects.toThrow('--delay requires a non-negative safe integer value');
 
     expect(mockApi.addressCounterparties).not.toHaveBeenCalled();
   });
