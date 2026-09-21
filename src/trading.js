@@ -786,24 +786,30 @@ export function signEvmTransaction(txData, privateKeyHex, chain, nonce) {
   };
 
   if (txData.maxFeePerGas) {
-    const { maxFeePerGas, maxPriorityFeePerGas } = resolveQuoteEip1559Fees(txData);
     return signEip1559Transaction({
       ...common,
-      maxFeePerGas: toHex(maxFeePerGas),
-      maxPriorityFeePerGas: toHex(maxPriorityFeePerGas),
+      maxFeePerGas: toHex(txData.maxFeePerGas),
+      // A zero priority fee is a valid choice but not a sane default, so fall
+      // back to the fee cap rather than to nothing when the quote omits it.
+      maxPriorityFeePerGas: toHex(txData.maxPriorityFeePerGas || txData.maxFeePerGas),
     }, privateKeyHex);
   }
 
-  return signLegacyTransaction({ ...common, gasPrice: toHex(resolveQuoteLegacyGasPrice(txData)) }, privateKeyHex);
+  // A gasPrice-only quote stays a legacy transaction; a quote with no fee
+  // information at all is refused (see NO_QUOTE_FEE_MESSAGE).
+  if (!txData.gasPrice) throw new Error(NO_QUOTE_FEE_MESSAGE);
+
+  return signLegacyTransaction({ ...common, gasPrice: toHex(txData.gasPrice) }, privateKeyHex);
 }
 
 // Previously the signers fell back to a hardcoded gas price (1 wei here, then
 // 1,000,000 wei = 0.001 gwei in the Privy/approval paths), which signs a
 // transaction that can never be mined and leaves the nonce stuck for every
 // later attempt. Refuse instead: a quote with no fee information at all is a
-// bug upstream, not something to sign through. Every EVM signing path — local,
-// Privy, and the approval/revoke transactions that precede a swap — resolves its
-// fee fields through these two helpers so the refusal is uniform.
+// bug upstream, not something to sign through. signEvmTransaction refuses it
+// directly; the Privy swap path and the approval/revoke transactions that
+// precede a swap resolve their fee fields through the two helpers below so the
+// refusal is uniform.
 const NO_QUOTE_FEE_MESSAGE =
   'Quote supplied no gas price (expected gasPrice or maxFeePerGas), so any signed transaction would be unmineable. Refusing to sign.';
 
@@ -1649,15 +1655,15 @@ export function buildApprovalTransaction(tokenAddress, spenderAddress, privateKe
   const chainConfig = CHAIN_MAP[chain];
   if (!chainConfig) throw new Error(`Unsupported chain: ${chain}`);
 
+  // An approval broadcast at a placeholder fee never mines and blocks the swap
+  // behind it, so require a real gas price the same way signEvmTransaction does.
+  if (!gasPrice) throw new Error(NO_QUOTE_FEE_MESSAGE);
+
   // Scope the approval to the swap's input amount so a malicious or buggy quote
   // can drain at most this one trade, never the wallet's full token balance.
   // encodeApproveCalldata enforces a valid 20-byte spender, a bounded (< MAX)
   // amount within the request cap, and exactly-68-byte calldata.
   const data = encodeApproveCalldata(spenderAddress, amount, { maxAllowance, allowZero });
-
-  // An approval broadcast at a placeholder fee never mines and blocks the swap
-  // behind it, so require a real gas price the same way signEvmTransaction does.
-  if (!gasPrice) throw new Error(NO_QUOTE_FEE_MESSAGE);
 
   const tx = {
     nonce,
