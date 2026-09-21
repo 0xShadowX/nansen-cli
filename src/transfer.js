@@ -76,17 +76,27 @@ async function rpcCall(url, method, params = []) {
     body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
   });
   const data = await response.json();
-  if (data.error) throw new Error(friendlyRpcError(data.error));
+  if (data.error) throw new Error(friendlyRpcError(data.error, method));
   return data.result;
 }
 
 /**
  * Convert raw RPC errors into actionable messages.
+ *
+ * rpcCall serves both rails, so the method name decides which chain's advice
+ * applies: EVM JSON-RPC methods are `eth_*`, Solana's are bare camelCase.
+ * geth rejects an underfunded transaction with "insufficient funds for gas *
+ * price + value", which used to match the Solana branch and tell a Base or
+ * Ethereum user to top up SOL.
  */
-function friendlyRpcError(error) {
+function friendlyRpcError(error, method = '') {
   const msg = error.message || JSON.stringify(error);
   const lower = msg.toLowerCase();
+  const isEvm = typeof method === 'string' && method.startsWith('eth_');
 
+  if (isEvm && lower.includes('insufficient funds')) {
+    return `Insufficient native balance to cover gas and value for this transaction. Top up the wallet with the chain's gas token (ETH on Ethereum and Base). RPC said: ${msg}`;
+  }
   if (lower.includes('no record of a prior credit') || lower.includes('accountnotfound')) {
     return 'Insufficient SOL for transaction fees. Send at least 0.01 SOL to your wallet.';
   }

@@ -543,8 +543,51 @@ describe('sendTokens integration', () => {
     });
 
     test('propagates RPC errors', async () => {
-      fetch.mockImplementation(async () => ({ json: () => Promise.resolve({ error: { message: 'insufficient lamports on account' } }) }));
-      await expect(sendTokens({ to: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4', amount: '1', chain: 'evm', password: 'test' })).rejects.toThrow('Insufficient SOL balance');
+      fetch.mockImplementation(async () => ({ json: () => Promise.resolve({ error: { message: 'nonce too low' } }) }));
+      await expect(sendTokens({ to: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4', amount: '1', chain: 'evm', password: 'test' })).rejects.toThrow('RPC error: nonce too low');
+    });
+
+    // geth/op-geth reject an underfunded send with "insufficient funds for gas
+    // * price + value". That used to hit the Solana branch of friendlyRpcError
+    // and tell an EVM user to top up SOL.
+    test('maps an EVM insufficient-funds rejection to the chain\'s gas token, not SOL', async () => {
+      fetch.mockImplementation(async (url, opts) => {
+        const body = JSON.parse(opts.body);
+        if (body.method === 'eth_sendRawTransaction') {
+          return { json: () => Promise.resolve({ error: { code: -32000, message: 'insufficient funds for gas * price + value: balance 0, tx cost 21000000000000, overshot 21000000000000' } }) };
+        }
+        const responses = {
+          'eth_getTransactionCount': '0x0',
+          'eth_feeHistory': { baseFeePerGas: ['0x1','0x1','0x1','0x1','0x1'] },
+          'eth_maxPriorityFeePerGas': '0x5F5E100',
+          'eth_getBalance': '0x' + (10n ** 18n).toString(16),
+          'eth_estimateGas': '0x5208',
+        };
+        return { json: () => Promise.resolve({ result: responses[body.method] ?? '0x0' }) };
+      });
+
+      const err = await sendTokens({ to: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4', amount: '0.01', chain: 'base', password: 'test' }).catch(e => e);
+      expect(err).toBeInstanceOf(Error);
+      expect(err.message).toMatch(/Insufficient native balance.*gas token.*ETH/);
+      expect(err.message).toContain('insufficient funds for gas * price + value');
+      expect(err.message).not.toMatch(/SOL/);
+    });
+
+    test('keeps the SOL advice for a Solana insufficient-funds rejection', async () => {
+      fetch.mockImplementation(async (url, opts) => {
+        const body = JSON.parse(opts.body);
+        if (body.method === 'sendTransaction') {
+          return { json: () => Promise.resolve({ error: { code: -32002, message: 'Transaction simulation failed: Transaction results in an account (0) with insufficient funds for rent' } }) };
+        }
+        const responses = {
+          'getLatestBlockhash': { value: { blockhash: 'GHtXQBpokWApVtJPBteD6jHQJPMBpfDY4PPnSr3DSEJQ' } },
+          'getBalance': { value: 10000000000 },
+        };
+        return { json: () => Promise.resolve({ result: responses[body.method] ?? null }) };
+      });
+
+      await expect(sendTokens({ to: '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM', amount: '0.5', chain: 'solana', password: 'test' }))
+        .rejects.toThrow('Insufficient SOL balance for this transaction. Top up your wallet with SOL.');
     });
 
     test('propagates network errors', async () => {
