@@ -6328,9 +6328,25 @@ describe('web search subcommand', () => {
     expect(mockApi.webSearch).toHaveBeenCalledWith({ queries: ['bitcoin'], numResults: 5 });
   });
 
-  it('treats non-numeric --num-results as undefined (NaN guard)', async () => {
-    await webCmd(['bitcoin'], { 'num-results': 'abc' });
-    expect(mockApi.webSearch).toHaveBeenCalledWith({ queries: ['bitcoin'], numResults: undefined });
+  it('rejects a malformed --num-results instead of truncating it or falling back to the API default', async () => {
+    for (const bad of ['abc', '5abc', '2.5', 'Infinity', 'NaN', '', ' ']) {
+      await expect(webCmd(['bitcoin'], { 'num-results': bad })).rejects.toMatchObject({ code: ErrorCode.INVALID_PARAMS });
+    }
+    await expect(webCmd(['bitcoin'], { 'num-results': ['5', '6'] })).rejects.toThrow('--num-results may only be specified once');
+    expect(mockApi.webSearch).not.toHaveBeenCalled();
+  });
+
+  it('rejects a valueless --num-results flag', async () => {
+    const commands = buildCommands({ output: () => {}, errorOutput: () => {}, exit: () => {} });
+    await expect(commands['web'](['search', 'bitcoin'], mockApi, { 'num-results': true }, {}))
+      .rejects.toThrow('--num-results requires a whole number between 1 and 20');
+  });
+
+  it('still accepts 1 and 20', async () => {
+    await webCmd(['bitcoin'], { 'num-results': '1' });
+    expect(mockApi.webSearch).toHaveBeenLastCalledWith({ queries: ['bitcoin'], numResults: 1 });
+    await webCmd(['bitcoin'], { 'num-results': '20' });
+    expect(mockApi.webSearch).toHaveBeenLastCalledWith({ queries: ['bitcoin'], numResults: 20 });
   });
 
   it('throws INVALID_PARAM when --num-results is 0 (out of range)', async () => {
