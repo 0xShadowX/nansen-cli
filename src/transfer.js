@@ -112,7 +112,7 @@ function isTransactionFailureMessage(error) {
 function friendlyRpcError(error, method = '') {
   const msg = error.message || JSON.stringify(error);
   const lower = msg.toLowerCase();
-  const isEvm = typeof method === 'string' && method.startsWith('eth_');
+  const isEvm = typeof method === 'string' && method.toLowerCase().startsWith('eth_');
 
   if (isEvm && lower.includes('insufficient funds')) {
     return `Insufficient native balance to cover gas and value for this transaction. Top up the wallet with the chain's native gas token (ETH on most EVM chains). RPC said: ${msg}`;
@@ -244,7 +244,10 @@ async function buildEvmTransaction({ to, amount, token, privateKey, chain, max =
           { from, to, value: '0x1' },
         ]);
         estGasLimit = BigInt(dummyEstimate) * 120n / 100n;
-      } catch {
+      } catch (err) {
+        // A node that rejects even a 1-wei transfer to this recipient is
+        // telling us the send cannot succeed; do not paper over it.
+        if (isDoomedTransactionError(err)) throw err;
         estGasLimit = 21000n;
       }
       // Reserve: L2 gas (gasLimit * maxFee) + L1 data fee buffer
@@ -918,7 +921,8 @@ async function sendTokensViaWalletConnect({ to, amount, chain, token, max, dryRu
           { from: wcAddress, to, value: '0x1' },
         ]);
         estGasLimit = BigInt(dummyEstimate) * 120n / 100n;
-      } catch {
+      } catch (err) {
+        if (isDoomedTransactionError(err)) throw err;
         estGasLimit = 21000n;
       }
       const feeHistory = await rpcCall(rpcUrl, 'eth_feeHistory', [4, 'latest', [50]]);

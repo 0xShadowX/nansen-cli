@@ -442,6 +442,34 @@ describe('sendTokens integration', () => {
       expect(estimateCall).toBeDefined();
     });
 
+    test('max native send aborts when the dummy estimate reports insufficient funds', async () => {
+      fetch.mockImplementation(async (url, opts) => {
+        const body = JSON.parse(opts.body);
+        if (body.method === 'eth_estimateGas') {
+          // Only the 1-wei dummy estimate fails; the final estimate would
+          // succeed, so the guard on the dummy call is what must abort.
+          if (body.params[0].value === '0x1') {
+            return { json: () => Promise.resolve({ error: { code: -32000, message: 'insufficient funds for gas * price + value' } }) };
+          }
+          return { json: () => Promise.resolve({ result: '0x5208' }) };
+        }
+        const responses = {
+          'eth_getTransactionCount': '0x0',
+          'eth_feeHistory': { baseFeePerGas: ['0x1','0x1','0x1','0x1','0x1'] },
+          'eth_maxPriorityFeePerGas': '0x5F5E100',
+          'eth_getBalance': '0x' + (10n ** 18n).toString(16),
+          'eth_sendRawTransaction': '0xshouldnotsend',
+          'eth_getTransactionReceipt': { status: '0x1', blockNumber: '0x100' },
+        };
+        return { json: () => Promise.resolve({ result: responses[body.method] ?? '0x0' }) };
+      });
+
+      await expect(sendTokens({ to: '0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4', chain: 'base', max: true, password: 'test' }))
+        .rejects.toThrow(/Insufficient native balance/);
+      const sendCall = fetch.mock.calls.find(c => JSON.parse(c[1].body).method === 'eth_sendRawTransaction');
+      expect(sendCall).toBeUndefined();
+    });
+
     test('rejects when ETH balance is insufficient', async () => {
       fetch.mockImplementation(async (url, opts) => {
         const body = JSON.parse(opts.body);
@@ -920,6 +948,43 @@ describe('sendTokens via WalletConnect', () => {
     expect(call.data).toBe('0x');
     expect(BigInt(call.value)).toBeLessThan(1000000000000000000n);
     expect(BigInt(call.value)).toBeGreaterThan(0n);
+
+    vi.restoreAllMocks();
+  });
+
+  // The --max flow's dummy 1-wei estimate used to swallow every error and
+  // fall back to 21000 gas, so a recipient the node says will revert still
+  // went on to the reserve calculation and a doomed broadcast.
+  test('max native send aborts when the dummy estimate says the transfer would revert', async () => {
+    vi.spyOn(wcTrading, 'getWalletConnectAddress').mockResolvedValue('0x742d35Cc6bF4F3f4e0e3a8DD7e37ff4e4Be4E4B4');
+    const sendSpy = vi.spyOn(wcTrading, 'sendTransactionViaWalletConnect').mockResolvedValue({ txHash: '0xshouldnotsend' });
+
+    fetch.mockImplementation(async (url, opts) => {
+      const body = JSON.parse(opts.body);
+      if (body.method === 'eth_getBalance') {
+        return { json: () => Promise.resolve({ result: '0xDE0B6B3A7640000' }) };
+      }
+      if (body.method === 'eth_estimateGas') {
+        // Only the 1-wei dummy estimate fails; a later estimate would succeed,
+        // so the guard on the dummy call is what has to stop the send.
+        if (body.params[0].value === '0x1') {
+          return { json: () => Promise.resolve({ error: { code: 3, message: 'execution reverted' } }) };
+        }
+        return { json: () => Promise.resolve({ result: '0x5208' }) };
+      }
+      if (body.method === 'eth_feeHistory') {
+        return { json: () => Promise.resolve({ result: { baseFeePerGas: ['0x3B9ACA00', '0x3B9ACA00'] } }) };
+      }
+      return { json: () => Promise.resolve({ result: '0x0' }) };
+    });
+
+    await expect(sendTokens({
+      to: '0x1234567890123456789012345678901234567890',
+      chain: 'evm',
+      walletconnect: true,
+      max: true,
+    })).rejects.toThrow(/execution reverted/);
+    expect(sendSpy).not.toHaveBeenCalled();
 
     vi.restoreAllMocks();
   });
